@@ -119,11 +119,11 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "enter":
 			return m, m.sendMove()
-		case "ctrl+u":
+		case "u":
 			return m, m.sendUndo()
 		case "ctrl+r":
 			return m, m.sendResign()
-		case "esc":
+		case "esc", "q":
 			return m, func() tea.Msg { return ScreenChangeMsg{Screen: screenLobby} }
 		}
 	}

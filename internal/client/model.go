@@ -184,7 +184,7 @@ func (m Model) handleWSMsg(msg screens.WSMsg) (tea.Model, tea.Cmd) {
 			return m.updateActiveScreen(screens.ErrMsg{Err: errString(payload.Message)})
 		}
 	}
-	return m, nil
+	return m, m.listenWS()
 }
 
 // listenWS returns a Cmd that reads from the WebSocket and sends WSMsg.
