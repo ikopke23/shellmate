@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/ikopke/shellmate/internal/shared"
+	"github.com/notnil/chess"
 )
 
 // Hub manages all active WebSocket connections and routes messages.
@@ -204,6 +205,13 @@ func (h *Hub) Route(ctx context.Context, c *Client, env shared.Envelope) {
 			return
 		}
 		h.handleUndoRequest(c, payload)
+	case shared.MsgResign:
+		var payload shared.Resign
+		if err := json.Unmarshal(env.Payload, &payload); err != nil {
+			sendError(c, "invalid resign payload")
+			return
+		}
+		h.handleResign(ctx, c, payload)
 	case shared.MsgUndoResponse:
 		var payload shared.UndoResponse
 		if err := json.Unmarshal(env.Payload, &payload); err != nil {
@@ -250,9 +258,17 @@ func (h *Hub) handleJoinGame(ctx context.Context, c *Client, payload shared.Join
 	}
 	g.black = c
 	c.game = payload.GameID
+	whiteUsername := g.white.username
 	g.mu.Unlock()
 	h.mu.Unlock()
 	slog.Info("player joined game", "game_id", payload.GameID, "black", c.username)
+	// notify both players the game has started
+	startMsg, _ := shared.Encode(shared.MsgGameStart, shared.GameStart{
+		GameID: payload.GameID,
+		White:  whiteUsername,
+		Black:  c.username,
+	})
+	g.Broadcast(startMsg)
 	h.BroadcastLobby(ctx)
 }
 
@@ -360,6 +376,35 @@ func (h *Hub) handleUndoResponse(ctx context.Context, c *Client, payload shared.
 				requester.Send(data)
 			}
 		}
+	}
+}
+
+func (h *Hub) handleResign(ctx context.Context, c *Client, payload shared.Resign) {
+	h.mu.RLock()
+	g, ok := h.games[payload.GameID]
+	h.mu.RUnlock()
+	if !ok {
+		sendError(c, "game not found")
+		return
+	}
+	g.mu.Lock()
+	var resignColor chess.Color
+	if c == g.white {
+		resignColor = chess.White
+	} else {
+		resignColor = chess.Black
+	}
+	g.chess.Resign(resignColor)
+	g.mu.Unlock()
+	h.mu.Lock()
+	_, stillExists := h.games[payload.GameID]
+	if stillExists {
+		delete(h.games, payload.GameID)
+	}
+	h.mu.Unlock()
+	if stillExists {
+		g.handleGameOver(ctx, h)
+		h.BroadcastLobby(ctx)
 	}
 }
 

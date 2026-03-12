@@ -10,21 +10,9 @@ import (
 	"github.com/notnil/chess"
 )
 
-// Screen identifies which screen is active.
-type Screen int
-
-const (
-	ScreenLogin Screen = iota
-	ScreenLobby
-	ScreenGame
-	ScreenHistory
-	ScreenReplay
-	ScreenLeaderboard
-)
-
 // Model is the root bubbletea model.
 type Model struct {
-	screen      Screen
+	screen      screens.ScreenID
 	conn        *websocket.Conn
 	username    string
 	serverAddr  string
@@ -41,7 +29,7 @@ type Model struct {
 // NewModel creates the root model starting at the login screen.
 func NewModel(serverAddr string) Model {
 	return Model{
-		screen:     ScreenLogin,
+		screen:     screens.ScreenLogin,
 		serverAddr: serverAddr,
 		login:      screens.NewLoginModel(serverAddr),
 	}
@@ -63,7 +51,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conn = msg.Conn
 		m.username = msg.Username
 		m.lobby = screens.NewLobbyModel(msg.Username, msg.Conn)
-		m.screen = ScreenLobby
+		m.screen = screens.ScreenLobby
 		return m, m.listenWS()
 	case screens.ScreenChangeMsg:
 		return m.handleScreenChange(msg)
@@ -77,37 +65,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.screen {
-	case ScreenLogin:
+	case screens.ScreenLogin:
 		updated, cmd := m.login.Update(msg)
 		if lm, ok := updated.(*screens.LoginModel); ok {
 			m.login = lm
 		}
 		return m, cmd
-	case ScreenLobby:
+	case screens.ScreenLobby:
 		updated, cmd := m.lobby.Update(msg)
 		if lm, ok := updated.(*screens.LobbyModel); ok {
 			m.lobby = lm
 		}
 		return m, cmd
-	case ScreenGame:
+	case screens.ScreenGame:
 		updated, cmd := m.game.Update(msg)
 		if gm, ok := updated.(*screens.GameModel); ok {
 			m.game = gm
 		}
 		return m, cmd
-	case ScreenHistory:
+	case screens.ScreenHistory:
 		updated, cmd := m.history.Update(msg)
 		if hm, ok := updated.(*screens.HistoryModel); ok {
 			m.history = hm
 		}
 		return m, cmd
-	case ScreenReplay:
+	case screens.ScreenReplay:
 		updated, cmd := m.replay.Update(msg)
 		if rm, ok := updated.(*screens.ReplayModel); ok {
 			m.replay = rm
 		}
 		return m, cmd
-	case ScreenLeaderboard:
+	case screens.ScreenLeaderboard:
 		updated, cmd := m.leaderboard.Update(msg)
 		if lm, ok := updated.(*screens.LeaderboardModel); ok {
 			m.leaderboard = lm
@@ -118,27 +106,27 @@ func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.Cmd) {
-	switch Screen(msg.Screen) {
-	case ScreenLobby:
+	switch msg.Screen {
+	case screens.ScreenLobby:
 		if m.lobby == nil {
 			m.lobby = screens.NewLobbyModel(m.username, m.conn)
 		}
-		m.screen = ScreenLobby
-	case ScreenHistory:
+		m.screen = screens.ScreenLobby
+	case screens.ScreenHistory:
 		m.history = screens.NewHistoryModel(m.username, m.conn)
-		m.screen = ScreenHistory
-	case ScreenReplay:
+		m.screen = screens.ScreenHistory
+	case screens.ScreenReplay:
 		m.replay = screens.NewReplayModel()
 		if rec, ok := msg.Data.(shared.HistoryRecord); ok && rec.PGN != "" {
 			_ = m.replay.LoadPGN(rec.PGN)
 		}
-		m.screen = ScreenReplay
-	case ScreenLeaderboard:
+		m.screen = screens.ScreenReplay
+	case screens.ScreenLeaderboard:
 		m.leaderboard = screens.NewLeaderboardModel(m.conn)
-		m.screen = ScreenLeaderboard
-	case ScreenGame:
+		m.screen = screens.ScreenLeaderboard
+	case screens.ScreenGame:
 		// game screen is set up by game_start messages
-		m.screen = ScreenGame
+		m.screen = screens.ScreenGame
 	}
 	return m, nil
 }
@@ -151,6 +139,13 @@ func (m Model) handleWSMsg(msg screens.WSMsg) (tea.Model, tea.Cmd) {
 		if err := json.Unmarshal(env.Payload, &state); err == nil && m.lobby != nil {
 			m.lobby.SetState(state)
 		}
+	case shared.MsgGameStart:
+		var payload shared.GameStart
+		if err := json.Unmarshal(env.Payload, &payload); err != nil {
+			return m, m.listenWS()
+		}
+		m.startGameFromMsg(payload)
+		return m, m.listenWS()
 	case shared.MsgMove:
 		var payload struct {
 			GameID string   `json:"game_id"`
@@ -159,8 +154,8 @@ func (m Model) handleWSMsg(msg screens.WSMsg) (tea.Model, tea.Cmd) {
 		}
 		if err := json.Unmarshal(env.Payload, &payload); err == nil && m.game != nil {
 			m.game.SetMoves(payload.Moves)
-			if m.screen != ScreenGame {
-				m.screen = ScreenGame
+			if m.screen != screens.ScreenGame {
+				m.screen = screens.ScreenGame
 			}
 		}
 	case shared.MsgGameOver:
@@ -169,9 +164,8 @@ func (m Model) handleWSMsg(msg screens.WSMsg) (tea.Model, tea.Cmd) {
 			m.game.SetGameOver(payload.Result, payload.WhiteEloAfter, payload.BlackEloAfter)
 		}
 	case shared.MsgUndoRequest:
-		// For now, auto-show a status message; proper UI would prompt
 		if m.game != nil {
-			// handled in game screen
+			m.game.SetPendingUndoPrompt(true)
 		}
 	case shared.MsgUndoAccepted:
 		var payload shared.UndoAccepted
@@ -206,25 +200,25 @@ func (m Model) listenWS() tea.Cmd {
 // View implements tea.Model.
 func (m Model) View() string {
 	switch m.screen {
-	case ScreenLogin:
+	case screens.ScreenLogin:
 		return m.login.View()
-	case ScreenLobby:
+	case screens.ScreenLobby:
 		if m.lobby != nil {
 			return m.lobby.View()
 		}
-	case ScreenGame:
+	case screens.ScreenGame:
 		if m.game != nil {
 			return m.game.View()
 		}
-	case ScreenHistory:
+	case screens.ScreenHistory:
 		if m.history != nil {
 			return m.history.View()
 		}
-	case ScreenReplay:
+	case screens.ScreenReplay:
 		if m.replay != nil {
 			return m.replay.View()
 		}
-	case ScreenLeaderboard:
+	case screens.ScreenLeaderboard:
 		if m.leaderboard != nil {
 			return m.leaderboard.View()
 		}
@@ -237,7 +231,13 @@ type errString string
 func (e errString) Error() string { return string(e) }
 
 // startGameFromMsg creates a new GameModel when the server notifies of a game start.
-func (m *Model) startGameFromMsg(gameID string, myColor chess.Color) {
-	m.game = screens.NewGameModel(gameID, myColor, m.conn, m.username)
-	m.screen = ScreenGame
+func (m *Model) startGameFromMsg(payload shared.GameStart) {
+	var myColor chess.Color
+	if m.username == payload.White {
+		myColor = chess.White
+	} else {
+		myColor = chess.Black
+	}
+	m.game = screens.NewGameModel(payload.GameID, myColor, m.conn, m.username)
+	m.screen = screens.ScreenGame
 }

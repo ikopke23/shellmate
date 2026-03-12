@@ -10,11 +10,6 @@ import (
 	"github.com/ikopke/shellmate/internal/shared"
 )
 
-const (
-	screenLeaderboard = 5
-	screenHistory     = 4
-)
-
 var (
 	lobbyTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).Padding(0, 1)
 	lobbyCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
@@ -28,6 +23,7 @@ type LobbyModel struct {
 	cursor   int
 	username string
 	conn     *websocket.Conn
+	err      string
 }
 
 // NewLobbyModel creates a new lobby screen.
@@ -55,6 +51,9 @@ func (m *LobbyModel) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m *LobbyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case ErrMsg:
+		m.err = msg.Err.Error()
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -74,9 +73,9 @@ func (m *LobbyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			return m, m.spectateGame()
 		case "l":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: screenLeaderboard} }
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLeaderboard} }
 		case "h":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: screenHistory} }
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenHistory} }
 		}
 	}
 	return m, nil
@@ -167,6 +166,10 @@ func (m *LobbyModel) View() string {
 			cursor, g.White, black, g.Moves, g.Spectators))
 	}
 	sb.WriteString("\n")
+	if m.err != "" {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
+		sb.WriteString("\n")
+	}
 	sb.WriteString(lobbyHelpStyle.Render("n:new  enter:join  s:spectate  h:history  l:leaderboard  q:quit"))
 	sb.WriteString("\n")
 	return sb.String()

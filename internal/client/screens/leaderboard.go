@@ -19,6 +19,7 @@ var (
 type LeaderboardModel struct {
 	players []shared.PlayerInfo
 	conn    *websocket.Conn
+	err     string
 }
 
 // NewLeaderboardModel creates a new leaderboard screen.
@@ -39,10 +40,13 @@ func (m *LeaderboardModel) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m *LeaderboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case ErrMsg:
+		m.err = msg.Err.Error()
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: screenLobby} }
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
 		case "ctrl+c":
 			return m, tea.Quit
 		}
@@ -64,6 +68,10 @@ func (m *LeaderboardModel) View() string {
 		sb.WriteString("  No players yet.\n")
 	}
 	sb.WriteString("\n")
+	if m.err != "" {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
+		sb.WriteString("\n")
+	}
 	sb.WriteString(lbHelpStyle.Render("q/esc:back"))
 	sb.WriteString("\n")
 	return sb.String()

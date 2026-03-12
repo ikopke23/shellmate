@@ -5,6 +5,18 @@ import (
 	"github.com/ikopke/shellmate/internal/shared"
 )
 
+// ScreenID identifies a TUI screen.
+type ScreenID int
+
+const (
+	ScreenLogin ScreenID = iota
+	ScreenLobby
+	ScreenGame
+	ScreenHistory
+	ScreenReplay
+	ScreenLeaderboard
+)
+
 // ConnectedMsg is sent when WebSocket connection is established.
 type ConnectedMsg struct {
 	Conn     *websocket.Conn
@@ -13,7 +25,7 @@ type ConnectedMsg struct {
 
 // ScreenChangeMsg requests a screen transition.
 type ScreenChangeMsg struct {
-	Screen int
+	Screen ScreenID
 	Data   interface{}
 }
 

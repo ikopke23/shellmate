@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,6 +26,7 @@ type ReplayModel struct {
 	stepIdx   int // current step (0 = start, len(moves) = end)
 	board     *render.Board
 	moveList  *render.MoveList
+	err       string
 }
 
 // NewReplayModel creates an empty replay screen.
@@ -77,10 +79,13 @@ func (m *ReplayModel) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case ErrMsg:
+		m.err = msg.Err.Error()
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: screenHistory} }
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenHistory} }
 		case "ctrl+c":
 			return m, tea.Quit
 		case "left", "h":
@@ -113,6 +118,10 @@ func (m *ReplayModel) View() string {
 		strings.Repeat(" ", 3) + stepInfo(m.stepIdx, len(m.moves)),
 	))
 	sb.WriteString("\n")
+	if m.err != "" {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
+		sb.WriteString("\n")
+	}
 	sb.WriteString(replayHelpStyle.Render("left/h:back  right/l:forward  q/esc:back"))
 	sb.WriteString("\n")
 	return sb.String()
@@ -122,8 +131,5 @@ func stepInfo(current, total int) string {
 	if total == 0 {
 		return "No moves"
 	}
-	return lipgloss.NewStyle().Render(strings.Join([]string{
-		"Move ", string(rune('0' + current/10)), string(rune('0' + current%10)),
-		"/", string(rune('0' + total/10)), string(rune('0' + total%10)),
-	}, ""))
+	return fmt.Sprintf("Move %d/%d", current, total)
 }

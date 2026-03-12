@@ -13,8 +13,6 @@ import (
 	"github.com/notnil/chess"
 )
 
-const screenLobby = 1
-
 var (
 	gameStatusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCC00"))
 	gameHelpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
@@ -22,18 +20,21 @@ var (
 
 // GameModel is the active game screen.
 type GameModel struct {
-	gameID    string
-	board     *render.Board
-	moveList  *render.MoveList
-	chess     *chess.Game
-	myColor   chess.Color
-	moveInput textinput.Model
-	statusMsg string
-	conn      *websocket.Conn
-	username  string
-	gameOver  bool
-	result    string
-	moves     []string
+	gameID           string
+	board            *render.Board
+	moveList         *render.MoveList
+	chess            *chess.Game
+	myColor          chess.Color
+	moveInput        textinput.Model
+	statusMsg        string
+	conn             *websocket.Conn
+	username         string
+	gameOver         bool
+	result           string
+	moves            []string
+	pendingUndo      bool
+	pendingUndoPrompt bool
+	err              string
 }
 
 // NewGameModel creates a new game screen.
@@ -105,6 +106,11 @@ func (m *GameModel) SetGameOver(result string, whiteElo, blackElo int) {
 	m.statusMsg = fmt.Sprintf("Game over: %s (White: %d, Black: %d)", result, whiteElo, blackElo)
 }
 
+// SetPendingUndoPrompt sets whether the opponent is requesting an undo.
+func (m *GameModel) SetPendingUndoPrompt(v bool) {
+	m.pendingUndoPrompt = v
+}
+
 // Init implements tea.Model.
 func (m *GameModel) Init() tea.Cmd {
 	return textinput.Blink
@@ -114,18 +120,36 @@ func (m *GameModel) Init() tea.Cmd {
 func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.pendingUndoPrompt {
+			switch msg.String() {
+			case "y":
+				m.pendingUndoPrompt = false
+				return m, m.sendUndoResponse(true)
+			case "n":
+				m.pendingUndoPrompt = false
+				return m, m.sendUndoResponse(false)
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "enter":
 			return m, m.sendMove()
 		case "u":
+			if len(m.moves) == 0 || m.pendingUndo {
+				return m, nil
+			}
+			m.pendingUndo = true
 			return m, m.sendUndo()
 		case "ctrl+r":
 			return m, m.sendResign()
 		case "esc", "q":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: screenLobby} }
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
 		}
+	case ErrMsg:
+		m.err = msg.Err.Error()
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.moveInput, cmd = m.moveInput.Update(msg)
@@ -165,7 +189,20 @@ func (m *GameModel) sendUndo() tea.Cmd {
 
 func (m *GameModel) sendResign() tea.Cmd {
 	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgMove, shared.Move{GameID: m.gameID, SAN: "resign"})
+		data, err := shared.Encode(shared.MsgResign, shared.Resign{GameID: m.gameID})
+		if err != nil {
+			return ErrMsg{Err: err}
+		}
+		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			return ErrMsg{Err: err}
+		}
+		return nil
+	}
+}
+
+func (m *GameModel) sendUndoResponse(accept bool) tea.Cmd {
+	return func() tea.Msg {
+		data, err := shared.Encode(shared.MsgUndoResponse, shared.UndoResponse{GameID: m.gameID, Accept: accept})
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -193,7 +230,15 @@ func (m *GameModel) View() string {
 		sb.WriteString(gameStatusStyle.Render(m.statusMsg))
 		sb.WriteString("\n")
 	}
-	help := "enter:move  ctrl+u:undo  ctrl+r:resign  esc:lobby"
+	if m.pendingUndoPrompt {
+		sb.WriteString(gameStatusStyle.Render("Opponent requests undo. Accept? (y/n)"))
+		sb.WriteString("\n")
+	}
+	if m.err != "" {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
+		sb.WriteString("\n")
+	}
+	help := "enter:move  u:undo  ctrl+r:resign  esc:lobby"
 	if m.gameOver {
 		help = "esc:back to lobby"
 	}

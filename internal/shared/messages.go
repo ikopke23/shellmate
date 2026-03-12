@@ -18,6 +18,8 @@ const (
 	MsgUndoRequest  MsgType = "undo_request"
 	MsgUndoResponse MsgType = "undo_response"
 	MsgUndoAccepted MsgType = "undo_accepted"
+	MsgGameStart    MsgType = "game_start"
+	MsgResign       MsgType = "resign"
 	MsgGameOver     MsgType = "game_over"
 	MsgError        MsgType = "error"
 )
@@ -124,12 +126,16 @@ type HistoryRecord struct {
 	PlayedAt       time.Time `json:"played_at"`
 }
 
-// GameStartMsg is sent to players/spectators when a game begins.
-type GameStartMsg struct {
+// GameStart is sent by the server when a game begins.
+type GameStart struct {
 	GameID  string `json:"game_id"`
 	White   string `json:"white"`
 	Black   string `json:"black"`
-	MyColor string `json:"my_color"` // "white", "black", or "spectator"
+}
+
+// Resign is sent by a player to forfeit the game.
+type Resign struct {
+	GameID string `json:"game_id"`
 }
 
 // Encode wraps a payload into an Envelope and marshals it to JSON.

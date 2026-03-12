@@ -10,8 +10,6 @@ import (
 	"github.com/ikopke/shellmate/internal/shared"
 )
 
-const screenReplay = 4
-
 var (
 	historyTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).Padding(0, 1)
 	historyCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
@@ -24,6 +22,7 @@ type HistoryModel struct {
 	cursor   int
 	username string
 	conn     *websocket.Conn
+	err      string
 }
 
 // NewHistoryModel creates a new history screen.
@@ -50,10 +49,13 @@ func (m *HistoryModel) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m *HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case ErrMsg:
+		m.err = msg.Err.Error()
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: screenLobby} }
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
 		case "ctrl+c":
 			return m, tea.Quit
 		case "j", "down":
@@ -68,7 +70,7 @@ func (m *HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.games) > 0 {
 				g := m.games[m.cursor]
 				return m, func() tea.Msg {
-					return ScreenChangeMsg{Screen: screenReplay, Data: g}
+					return ScreenChangeMsg{Screen: ScreenReplay, Data: g}
 				}
 			}
 		}
@@ -93,6 +95,10 @@ func (m *HistoryModel) View() string {
 			cursor, g.White, g.Black, g.Result, g.PlayedAt.Format("2006-01-02 15:04")))
 	}
 	sb.WriteString("\n")
+	if m.err != "" {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
+		sb.WriteString("\n")
+	}
 	sb.WriteString(historyHelpStyle.Render("enter:replay  q/esc:back"))
 	sb.WriteString("\n")
 	return sb.String()
