@@ -42,14 +42,16 @@ type Board struct {
 	position     *chess.Position
 	lastMoveFrom chess.Square
 	lastMoveTo   chess.Square
+	hasLastMove  bool
 	flipped      bool
 }
 
 // NewBoard creates a board in the starting position, white at bottom.
 func NewBoard(pos *chess.Position, flipped bool) *Board {
 	return &Board{
-		position: pos,
-		flipped:  flipped,
+		position:    pos,
+		flipped:     flipped,
+		hasLastMove: false,
 	}
 }
 
@@ -58,6 +60,7 @@ func (b *Board) SetPosition(pos *chess.Position, from, to chess.Square) {
 	b.position = pos
 	b.lastMoveFrom = from
 	b.lastMoveTo = to
+	b.hasLastMove = true
 }
 
 // View returns the rendered board as a string.
@@ -82,12 +85,12 @@ func (b *Board) View() string {
 	for _, rankIdx := range rankOrder {
 		rankNum := rankIdx + 1
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA")).Render(
-			strings.Repeat(" ", 0)+string(rune('0'+rankNum))+" ",
+			string(rune('0'+rankNum))+" ",
 		))
 		for _, fileIdx := range fileOrder {
 			sq := chess.Square(rankIdx*8 + fileIdx)
 			isLight := (fileIdx+rankIdx)%2 != 0
-			isHighlighted := sq == b.lastMoveFrom || sq == b.lastMoveTo
+			isHighlighted := b.hasLastMove && (sq == b.lastMoveFrom || sq == b.lastMoveTo)
 
 			var bg lipgloss.Color
 			switch {
@@ -101,19 +104,25 @@ func (b *Board) View() string {
 				bg = darkSquareBg
 			}
 
+			p := board.Piece(sq)
 			var fg lipgloss.Color
-			if isLight {
+			if p == chess.NoPiece {
+				if isLight {
+					fg = pieceDarkFg
+				} else {
+					fg = pieceLightFg
+				}
+			} else if p.Color() == chess.White {
 				fg = pieceDarkFg
 			} else {
 				fg = pieceLightFg
 			}
 
-			piece := board.Piece(sq)
 			var symbol string
-			if piece == chess.NoPiece {
+			if p == chess.NoPiece {
 				symbol = " "
 			} else {
-				symbol = pieceSymbols[piece.Color()][piece.Type()]
+				symbol = pieceSymbols[p.Color()][p.Type()]
 			}
 
 			cell := lipgloss.NewStyle().
