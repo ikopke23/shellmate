@@ -50,6 +50,16 @@ func NewHub(db *DB, inviteCode string) *Hub {
 	}
 }
 
+// GetLeaderboard returns all users ordered by Elo DESC.
+func (h *Hub) GetLeaderboard(ctx context.Context) ([]User, error) {
+	return h.db.GetLeaderboard(ctx)
+}
+
+// GetGameHistory returns game history for a user.
+func (h *Hub) GetGameHistory(ctx context.Context, username string) ([]HistoryRecord, error) {
+	return h.db.GetGameHistory(ctx, username)
+}
+
 // Register adds a new authenticated client to the hub.
 func (h *Hub) Register(username string, conn *websocket.Conn) *Client {
 	h.mu.Lock()

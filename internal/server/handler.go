@@ -38,7 +38,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.hub.HandleConn(r.Context(), conn)
 	case "/leaderboard":
-		users, err := h.hub.db.GetLeaderboard(r.Context())
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		users, err := h.hub.GetLeaderboard(r.Context())
 		if err != nil {
 			slog.Error("failed to get leaderboard", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -50,12 +54,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(users)
 	case "/history":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		username := r.URL.Query().Get("user")
 		if username == "" {
 			http.Error(w, "user parameter required", http.StatusBadRequest)
 			return
 		}
-		records, err := h.hub.db.GetGameHistory(r.Context(), username)
+		records, err := h.hub.GetGameHistory(r.Context(), username)
 		if err != nil {
 			slog.Error("failed to get game history", "error", err, "username", username)
 			http.Error(w, "internal server error", http.StatusInternalServerError)

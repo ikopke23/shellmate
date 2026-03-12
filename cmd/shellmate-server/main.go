@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/ikopke/shellmate/internal/server"
 )
@@ -46,17 +47,27 @@ func main() {
 		Handler: handler,
 	}
 	slog.Info("starting shellmate server", "addr", listenAddr)
+	serverErr := make(chan error, 1)
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("http server error", "error", err)
-			os.Exit(1)
+			serverErr <- err
 		}
 	}()
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	slog.Info("shutting down server")
-	httpServer.Shutdown(ctx)
+	select {
+	case err := <-serverErr:
+		slog.Error("http server error", "error", err)
+		cancel()
+		return
+	case <-quit:
+		slog.Info("shutting down")
+	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("shutdown error", "error", err)
+	}
 }
 
 func readMigration() (string, error) {
