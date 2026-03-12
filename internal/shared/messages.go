@@ -14,6 +14,7 @@ const (
 	MsgMove         MsgType = "move"
 	MsgUndoRequest  MsgType = "undo_request"
 	MsgUndoResponse MsgType = "undo_response"
+	MsgUndoAccepted MsgType = "undo_accepted"
 	MsgGameOver     MsgType = "game_over"
 	MsgError        MsgType = "error"
 )
@@ -81,6 +82,12 @@ type UndoRequest struct {
 type UndoResponse struct {
 	GameID string `json:"game_id"`
 	Accept bool   `json:"accept"`
+}
+
+// UndoAccepted is broadcast when an undo is accepted and the last move reverted.
+type UndoAccepted struct {
+	GameID string   `json:"game_id"`
+	Moves  []string `json:"moves"` // full move list in SAN after undo
 }
 
 // ErrorMsg is sent by the server to communicate a protocol or application error.

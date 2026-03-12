@@ -67,61 +67,77 @@ func (h *Hub) Register(username string, conn *websocket.Conn) *Client {
 // Unregister removes a client and cleans up any games they were in.
 func (h *Hub) Unregister(c *Client) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	delete(h.clients, c.username)
 	close(c.send)
-	// Remove from any game as spectator.
+	// snapshot games to clean up spectators from, without holding lock
+	var spectatorGames []*Game
 	for _, g := range h.games {
+		for _, sp := range g.spectators {
+			if sp == c {
+				spectatorGames = append(spectatorGames, g)
+				break
+			}
+		}
+	}
+	h.mu.Unlock()
+	// now remove spectator outside the hub lock
+	for _, g := range spectatorGames {
 		g.RemoveSpectator(c)
 	}
 }
 
 // buildLobbyData builds the encoded LobbyState message and returns a snapshot of current clients.
 // Caller must NOT hold h.mu.
-func (h *Hub) buildLobbyData(ctx context.Context) ([]byte, []*Client) {
+func (h *Hub) buildLobbyData(ctx context.Context) ([]byte, []*Client, error) {
 	h.mu.RLock()
-	var players []shared.PlayerInfo
-	for _, c := range h.clients {
-		u, err := h.db.GetUser(ctx, c.username)
-		if err != nil || u == nil {
-			players = append(players, shared.PlayerInfo{Username: c.username, Elo: 1500, Online: true})
-			continue
-		}
-		players = append(players, shared.PlayerInfo{Username: u.Username, Elo: u.Elo, Online: true})
+	// snapshot everything we need from the hub while locked
+	usernames := make([]string, 0, len(h.clients))
+	clientSnapshot := make([]*Client, 0, len(h.clients))
+	for u, c := range h.clients {
+		usernames = append(usernames, u)
+		clientSnapshot = append(clientSnapshot, c)
 	}
-	var gameInfos []shared.GameInfo
+	// snapshot game info (no DB needed for games)
+	gameInfos := make([]shared.GameInfo, 0, len(h.games))
 	for _, g := range h.games {
 		g.mu.Lock()
-		black := ""
-		if g.black != nil {
-			black = g.black.username
-		}
 		gi := shared.GameInfo{
 			ID:         g.id,
-			White:      g.white.username,
-			Black:      black,
 			Spectators: len(g.spectators),
 			Moves:      len(g.chess.Moves()),
+		}
+		if g.white != nil {
+			gi.White = g.white.username
+		}
+		if g.black != nil {
+			gi.Black = g.black.username
 		}
 		g.mu.Unlock()
 		gameInfos = append(gameInfos, gi)
 	}
-	clients := make([]*Client, 0, len(h.clients))
-	for _, c := range h.clients {
-		clients = append(clients, c)
-	}
 	h.mu.RUnlock()
-	data, err := shared.Encode(shared.MsgLobbyState, shared.LobbyState{Players: players, Games: gameInfos})
-	if err != nil {
-		slog.Error("failed to encode lobby state", "error", err)
-		return nil, nil
+	// DB calls outside the lock
+	playerInfos := make([]shared.PlayerInfo, 0, len(usernames))
+	for _, u := range usernames {
+		user, err := h.db.GetUser(ctx, u)
+		if err != nil || user == nil {
+			playerInfos = append(playerInfos, shared.PlayerInfo{Username: u, Elo: 1500, Online: true})
+			continue
+		}
+		playerInfos = append(playerInfos, shared.PlayerInfo{Username: u, Elo: user.Elo, Online: true})
 	}
-	return data, clients
+	state := shared.LobbyState{Players: playerInfos, Games: gameInfos}
+	data, err := shared.Encode(shared.MsgLobbyState, state)
+	return data, clientSnapshot, err
 }
 
 // sendLobbyTo sends the current lobby state to a single client.
 func (h *Hub) sendLobbyTo(ctx context.Context, c *Client) {
-	data, _ := h.buildLobbyData(ctx)
+	data, _, err := h.buildLobbyData(ctx)
+	if err != nil {
+		slog.Error("failed to build lobby data", "error", err)
+		return
+	}
 	if data != nil {
 		c.Send(data)
 	}
@@ -129,7 +145,11 @@ func (h *Hub) sendLobbyTo(ctx context.Context, c *Client) {
 
 // BroadcastLobby sends the current lobby state to all connected clients.
 func (h *Hub) BroadcastLobby(ctx context.Context) {
-	data, clients := h.buildLobbyData(ctx)
+	data, clients, err := h.buildLobbyData(ctx)
+	if err != nil {
+		slog.Error("failed to build lobby data", "error", err)
+		return
+	}
 	if data == nil {
 		return
 	}
@@ -253,11 +273,16 @@ func (h *Hub) handleMove(ctx context.Context, c *Client, payload shared.Move) {
 	}
 	g.BroadcastMove(payload.SAN)
 	if g.IsOver() {
-		g.handleGameOver(ctx, h)
 		h.mu.Lock()
-		delete(h.games, payload.GameID)
+		_, stillExists := h.games[payload.GameID]
+		if stillExists {
+			delete(h.games, payload.GameID)
+		}
 		h.mu.Unlock()
-		h.BroadcastLobby(ctx)
+		if stillExists {
+			g.handleGameOver(ctx, h)
+			h.BroadcastLobby(ctx)
+		}
 	}
 }
 
@@ -303,8 +328,8 @@ func (h *Hub) handleUndoResponse(ctx context.Context, c *Client, payload shared.
 			sendError(c, err.Error())
 			return
 		}
-		// Broadcast updated move state with empty SAN to indicate undo.
-		g.BroadcastMove("")
+		// Broadcast undo accepted with current move list.
+		g.BroadcastUndoAccepted()
 	} else {
 		if err := g.RejectUndo(c); err != nil {
 			sendError(c, err.Error())
@@ -385,7 +410,8 @@ func (h *Hub) HandleConn(ctx context.Context, conn *websocket.Conn) {
 	go func() {
 		for msg := range client.send {
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-				slog.Error("write error", "username", client.username, "error", err)
+				slog.Error("write error", "username", client.username, "err", err)
+				conn.Close()
 				return
 			}
 		}
@@ -437,7 +463,3 @@ func generateID() string {
 	return fmt.Sprintf("%x", b)
 }
 
-// encodeMsg is a package-level helper used by game.go.
-func encodeMsg(msgType string, payload any) ([]byte, error) {
-	return shared.Encode(shared.MsgType(msgType), payload)
-}

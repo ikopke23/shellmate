@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
 )
 
@@ -181,9 +182,28 @@ func (g *Game) BroadcastMove(san string) {
 		SAN    string   `json:"san"`
 		Moves  []string `json:"moves"`
 	}
-	data, err := encode("move", moveMsg{GameID: g.id, SAN: san, Moves: moveList})
+	data, err := shared.Encode(shared.MsgMove, moveMsg{GameID: g.id, SAN: san, Moves: moveList})
 	if err != nil {
 		slog.Error("failed to encode move broadcast", "error", err)
+		return
+	}
+	g.broadcastLocked(data)
+}
+
+// BroadcastUndoAccepted sends an undo_accepted message with the current move list.
+func (g *Game) BroadcastUndoAccepted() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	notation := chess.AlgebraicNotation{}
+	positions := g.chess.Positions()
+	moves := g.chess.Moves()
+	var moveList []string
+	for i, m := range moves {
+		moveList = append(moveList, notation.Encode(positions[i], m))
+	}
+	data, err := shared.Encode(shared.MsgUndoAccepted, shared.UndoAccepted{GameID: g.id, Moves: moveList})
+	if err != nil {
+		slog.Error("failed to encode undo_accepted broadcast", "error", err)
 		return
 	}
 	g.broadcastLocked(data)
@@ -240,7 +260,7 @@ func (g *Game) handleGameOver(ctx context.Context, hub *Hub) {
 		slog.Error("failed to save game", "error", err)
 		return
 	}
-	overMsg, err := encode("game_over", gameOverPayload{
+	overMsg, err := shared.Encode(shared.MsgGameOver, shared.GameOver{
 		GameID:         g.id,
 		Result:         string(outcome),
 		WhiteEloBefore: whiteUser.Elo,
@@ -257,18 +277,3 @@ func (g *Game) handleGameOver(ctx context.Context, hub *Hub) {
 	g.Broadcast(overMsg)
 }
 
-type gameOverPayload struct {
-	GameID         string `json:"game_id"`
-	Result         string `json:"result"`
-	WhiteEloBefore int    `json:"white_elo_before"`
-	BlackEloBefore int    `json:"black_elo_before"`
-	WhiteEloAfter  int    `json:"white_elo_after"`
-	BlackEloAfter  int    `json:"black_elo_after"`
-	WhiteUsername  string `json:"white_username"`
-	BlackUsername  string `json:"black_username"`
-}
-
-// encode is a helper wrapping shared.Encode to avoid repeating the import.
-func encode(msgType string, payload any) ([]byte, error) {
-	return encodeMsg(msgType, payload)
-}
