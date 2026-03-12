@@ -175,7 +175,10 @@ func (m Model) handleWSMsg(msg screens.WSMsg) (tea.Model, tea.Cmd) {
 	case shared.MsgError:
 		var payload shared.ErrorMsg
 		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			m.updateActiveScreen(screens.ErrMsg{Err: errString(payload.Message)})
+			updated, _ := m.updateActiveScreen(screens.ErrMsg{Err: errString(payload.Message)})
+			if um, ok := updated.(Model); ok {
+				m = um
+			}
 		}
 	}
 	return m, m.listenWS()
