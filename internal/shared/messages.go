@@ -65,10 +65,11 @@ type SpectateGame struct {
 	GameID string `json:"game_id"`
 }
 
-// Move is sent by a client to make a move in a game.
+// Move is sent by a client to make a move in an active game.
+// SAN is Standard Algebraic Notation (e.g. "e4", "Nf3", "O-O").
 type Move struct {
 	GameID string `json:"game_id"`
-	SAN    string `json:"san"`
+	SAN    string `json:"san"` // Standard Algebraic Notation
 }
 
 // UndoRequest is sent by a client to request that the last move be undone.
@@ -80,6 +81,11 @@ type UndoRequest struct {
 type UndoResponse struct {
 	GameID string `json:"game_id"`
 	Accept bool   `json:"accept"`
+}
+
+// ErrorMsg is sent by the server to communicate a protocol or application error.
+type ErrorMsg struct {
+	Message string `json:"message"`
 }
 
 // GameOver is broadcast when a game ends, including Elo changes.
