@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -86,23 +87,51 @@ func (d *DB) GetUser(ctx context.Context, username string) (*User, error) {
 	return u, nil
 }
 
-// SaveGame persists a completed game to the games table.
-func (d *DB) SaveGame(ctx context.Context, g GameRecord) error {
-	_, err := d.pool.Exec(ctx,
+// SaveGameAndUpdateElo atomically inserts a completed game and updates both players' elo and games_played.
+func (d *DB) SaveGameAndUpdateElo(ctx context.Context, g GameRecord, whiteElo, blackElo int) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx,
 		`INSERT INTO games (white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		g.White, g.Black, g.Result, g.WhiteEloBefore, g.BlackEloBefore, g.WhiteEloAfter, g.BlackEloAfter, g.PGN,
+	); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE users SET elo = $1, games_played = games_played + 1 WHERE username = $2`,
+		whiteElo, g.White,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("user not found: %s", g.White)
+	}
+	tag, err = tx.Exec(ctx,
+		`UPDATE users SET elo = $1, games_played = games_played + 1 WHERE username = $2`,
+		blackElo, g.Black,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("user not found: %s", g.Black)
+	}
+	return tx.Commit(ctx)
 }
 
-// GetGameHistory returns all games where username is white or black, ordered by played_at DESC.
+// GetGameHistory returns the 100 most recent games where username is white or black, ordered by played_at DESC.
 func (d *DB) GetGameHistory(ctx context.Context, username string) ([]HistoryRecord, error) {
 	rows, err := d.pool.Query(ctx,
 		`SELECT id, white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, played_at
 		 FROM games
 		 WHERE white = $1 OR black = $1
-		 ORDER BY played_at DESC`,
+		 ORDER BY played_at DESC
+		 LIMIT 100`,
 		username,
 	)
 	if err != nil {
@@ -120,10 +149,10 @@ func (d *DB) GetGameHistory(ctx context.Context, username string) ([]HistoryReco
 	return records, rows.Err()
 }
 
-// GetLeaderboard returns all users ordered by Elo DESC.
+// GetLeaderboard returns the top 200 users ordered by Elo DESC.
 func (d *DB) GetLeaderboard(ctx context.Context) ([]User, error) {
 	rows, err := d.pool.Query(ctx,
-		`SELECT id, username, elo, games_played FROM users ORDER BY elo DESC`,
+		`SELECT id, username, elo, games_played FROM users ORDER BY elo DESC LIMIT 200`,
 	)
 	if err != nil {
 		return nil, err
@@ -140,24 +169,3 @@ func (d *DB) GetLeaderboard(ctx context.Context) ([]User, error) {
 	return users, rows.Err()
 }
 
-// UpdateElo updates elo and increments games_played for both players atomically.
-func (d *DB) UpdateElo(ctx context.Context, white, black string, whiteElo, blackElo int) error {
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx,
-		`UPDATE users SET elo = $1, games_played = games_played + 1 WHERE username = $2`,
-		whiteElo, white,
-	); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx,
-		`UPDATE users SET elo = $1, games_played = games_played + 1 WHERE username = $2`,
-		blackElo, black,
-	); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
