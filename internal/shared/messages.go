@@ -1,6 +1,9 @@
 package shared
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // MsgType identifies the kind of WebSocket message being sent or received.
 type MsgType string
@@ -105,6 +108,28 @@ type GameOver struct {
 	BlackEloAfter  int    `json:"black_elo_after"`
 	WhiteUsername  string `json:"white_username"`
 	BlackUsername  string `json:"black_username"`
+}
+
+// HistoryRecord describes a completed game for the history/replay screens.
+type HistoryRecord struct {
+	ID             string    `json:"id"`
+	White          string    `json:"white"`
+	Black          string    `json:"black"`
+	Result         string    `json:"result"`
+	WhiteEloBefore int       `json:"white_elo_before"`
+	BlackEloBefore int       `json:"black_elo_before"`
+	WhiteEloAfter  int       `json:"white_elo_after"`
+	BlackEloAfter  int       `json:"black_elo_after"`
+	PGN            string    `json:"pgn,omitempty"`
+	PlayedAt       time.Time `json:"played_at"`
+}
+
+// GameStartMsg is sent to players/spectators when a game begins.
+type GameStartMsg struct {
+	GameID  string `json:"game_id"`
+	White   string `json:"white"`
+	Black   string `json:"black"`
+	MyColor string `json:"my_color"` // "white", "black", or "spectator"
 }
 
 // Encode wraps a payload into an Envelope and marshals it to JSON.

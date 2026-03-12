@@ -1,1 +1,99 @@
 package screens
+
+import (
+	"fmt"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/gorilla/websocket"
+	"github.com/ikopke/shellmate/internal/shared"
+)
+
+const screenReplay = 4
+
+var (
+	historyTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).Padding(0, 1)
+	historyCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
+	historyHelpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
+)
+
+// HistoryModel shows past games for the logged-in user.
+type HistoryModel struct {
+	games    []shared.HistoryRecord
+	cursor   int
+	username string
+	conn     *websocket.Conn
+}
+
+// NewHistoryModel creates a new history screen.
+func NewHistoryModel(username string, conn *websocket.Conn) *HistoryModel {
+	return &HistoryModel{
+		username: username,
+		conn:     conn,
+	}
+}
+
+// SetGames sets the game history records.
+func (m *HistoryModel) SetGames(games []shared.HistoryRecord) {
+	m.games = games
+	if m.cursor >= len(m.games) && len(m.games) > 0 {
+		m.cursor = len(m.games) - 1
+	}
+}
+
+// Init implements tea.Model.
+func (m *HistoryModel) Init() tea.Cmd {
+	return nil
+}
+
+// Update implements tea.Model.
+func (m *HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "esc":
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: screenLobby} }
+		case "ctrl+c":
+			return m, tea.Quit
+		case "j", "down":
+			if m.cursor < len(m.games)-1 {
+				m.cursor++
+			}
+		case "k", "up":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "enter":
+			if len(m.games) > 0 {
+				g := m.games[m.cursor]
+				return m, func() tea.Msg {
+					return ScreenChangeMsg{Screen: screenReplay, Data: g}
+				}
+			}
+		}
+	}
+	return m, nil
+}
+
+// View implements tea.Model.
+func (m *HistoryModel) View() string {
+	var sb strings.Builder
+	sb.WriteString(historyTitleStyle.Render(fmt.Sprintf("Game History - %s", m.username)))
+	sb.WriteString("\n\n")
+	if len(m.games) == 0 {
+		sb.WriteString("  No games played yet.\n")
+	}
+	for i, g := range m.games {
+		cursor := "  "
+		if i == m.cursor {
+			cursor = historyCursorStyle.Render("> ")
+		}
+		sb.WriteString(fmt.Sprintf("%s%-12s vs %-12s  %s  %s\n",
+			cursor, g.White, g.Black, g.Result, g.PlayedAt.Format("2006-01-02 15:04")))
+	}
+	sb.WriteString("\n")
+	sb.WriteString(historyHelpStyle.Render("enter:replay  q/esc:back"))
+	sb.WriteString("\n")
+	return sb.String()
+}

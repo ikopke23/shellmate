@@ -1,4 +1,4 @@
-package client
+package render
 
 import (
 	"strings"
@@ -13,7 +13,6 @@ func TestMoveListViewFormat(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 rows, got %d: %q", len(lines), lines)
 	}
-	// Strip ANSI escapes for content check
 	plain := stripANSI(view)
 	if !strings.Contains(plain, "1.") {
 		t.Errorf("expected move number '1.' in output: %q", plain)
@@ -53,8 +52,6 @@ func TestMoveListIncompletePair(t *testing.T) {
 }
 
 func TestMoveListScrollDown(t *testing.T) {
-	// height=2, 8 moves = 4 rows; currentIdx=6 means row 3 (0-based)
-	// scrollOffset should become 2 so rows 2,3 are shown
 	ml := NewMoveList(2)
 	ml.SetMoves([]string{"e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6"}, 6)
 	if ml.scrollOffset != 2 {
@@ -67,7 +64,6 @@ func TestMoveListScrollDown(t *testing.T) {
 	if !strings.Contains(plain, "4.") {
 		t.Errorf("expected row starting with '4.' in view: %q", plain)
 	}
-	// Rows 1 and 2 should not be visible
 	if strings.Contains(plain, "1.") {
 		t.Errorf("row 1 should be scrolled out: %q", plain)
 	}
@@ -75,9 +71,7 @@ func TestMoveListScrollDown(t *testing.T) {
 
 func TestMoveListScrollUp(t *testing.T) {
 	ml := NewMoveList(2)
-	// First set moves with currentIdx at end to scroll down
 	ml.SetMoves([]string{"e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6"}, 6)
-	// Now set current back to first move (row 0)
 	ml.SetMoves([]string{"e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6"}, 0)
 	if ml.scrollOffset != 0 {
 		t.Errorf("expected scrollOffset=0 after scroll-up, got %d", ml.scrollOffset)
@@ -91,7 +85,6 @@ func TestMoveListScrollUp(t *testing.T) {
 func TestMoveListEmpty(t *testing.T) {
 	ml := NewMoveList(4)
 	view := ml.View()
-	// Should return height newlines
 	if view != "\n\n\n\n" {
 		t.Errorf("expected 4 newlines for empty move list, got %q", view)
 	}
@@ -107,7 +100,6 @@ func TestMoveListCurrentIdxNone(t *testing.T) {
 	}
 }
 
-// stripANSI removes ANSI escape sequences from s for plain-text comparison.
 func stripANSI(s string) string {
 	var out strings.Builder
 	i := 0
@@ -117,7 +109,7 @@ func stripANSI(s string) string {
 			for i < len(s) && s[i] != 'm' {
 				i++
 			}
-			i++ // skip 'm'
+			i++
 			continue
 		}
 		out.WriteByte(s[i])
