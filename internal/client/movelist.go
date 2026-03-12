@@ -7,9 +7,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var highlightRowBg = lipgloss.Color("#3C3C3C")
-
-var highlightRowStyle = lipgloss.NewStyle().Background(highlightRowBg)
+var (
+	highlightRowBg    = lipgloss.Color("#3C3C3C")
+	highlightRowStyle = lipgloss.NewStyle().Background(highlightRowBg)
+)
 
 // MoveList renders the move history for a chess game as a scrollable panel.
 // Moves are displayed in pairs: "1. e4   e5", "2. Nf3  Nc6", etc.
@@ -24,6 +25,9 @@ type MoveList struct {
 
 // NewMoveList creates an empty move list with the given visible height.
 func NewMoveList(height int) *MoveList {
+	if height <= 0 {
+		height = 1
+	}
 	return &MoveList{
 		height:     height,
 		currentIdx: -1,
