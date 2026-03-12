@@ -76,8 +76,9 @@ func (h *Hub) Unregister(c *Client) {
 	}
 }
 
-// BroadcastLobby sends the current lobby state to all connected clients.
-func (h *Hub) BroadcastLobby(ctx context.Context) {
+// buildLobbyData builds the encoded LobbyState message and returns a snapshot of current clients.
+// Caller must NOT hold h.mu.
+func (h *Hub) buildLobbyData(ctx context.Context) ([]byte, []*Client) {
 	h.mu.RLock()
 	var players []shared.PlayerInfo
 	for _, c := range h.clients {
@@ -105,15 +106,34 @@ func (h *Hub) BroadcastLobby(ctx context.Context) {
 		g.mu.Unlock()
 		gameInfos = append(gameInfos, gi)
 	}
+	clients := make([]*Client, 0, len(h.clients))
+	for _, c := range h.clients {
+		clients = append(clients, c)
+	}
 	h.mu.RUnlock()
 	data, err := shared.Encode(shared.MsgLobbyState, shared.LobbyState{Players: players, Games: gameInfos})
 	if err != nil {
 		slog.Error("failed to encode lobby state", "error", err)
+		return nil, nil
+	}
+	return data, clients
+}
+
+// sendLobbyTo sends the current lobby state to a single client.
+func (h *Hub) sendLobbyTo(ctx context.Context, c *Client) {
+	data, _ := h.buildLobbyData(ctx)
+	if data != nil {
+		c.Send(data)
+	}
+}
+
+// BroadcastLobby sends the current lobby state to all connected clients.
+func (h *Hub) BroadcastLobby(ctx context.Context) {
+	data, clients := h.buildLobbyData(ctx)
+	if data == nil {
 		return
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for _, c := range h.clients {
+	for _, c := range clients {
 		c.Send(data)
 	}
 }
@@ -121,6 +141,9 @@ func (h *Hub) BroadcastLobby(ctx context.Context) {
 // Route dispatches an incoming Envelope to the correct handler.
 func (h *Hub) Route(ctx context.Context, c *Client, env shared.Envelope) {
 	switch env.Type {
+	case shared.MsgJoinLobby:
+		// Already connected; re-send lobby state.
+		h.sendLobbyTo(ctx, c)
 	case shared.MsgCreateGame:
 		h.handleCreateGame(ctx, c)
 	case shared.MsgJoinGame:
