@@ -111,6 +111,11 @@ func (m *GameModel) SetPendingUndoPrompt(v bool) {
 	m.pendingUndoPrompt = v
 }
 
+// ClearPendingUndo clears the pending undo flag (e.g. when opponent rejects).
+func (m *GameModel) ClearPendingUndo() {
+	m.pendingUndo = false
+}
+
 // Init implements tea.Model.
 func (m *GameModel) Init() tea.Cmd {
 	return textinput.Blink
@@ -134,18 +139,24 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "esc", "q":
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
 		case "enter":
+			if m.myColor == chess.NoColor {
+				return m, nil
+			}
 			return m, m.sendMove()
 		case "u":
-			if len(m.moves) == 0 || m.pendingUndo {
+			if m.myColor == chess.NoColor || len(m.moves) == 0 || m.pendingUndo {
 				return m, nil
 			}
 			m.pendingUndo = true
 			return m, m.sendUndo()
 		case "ctrl+r":
+			if m.myColor == chess.NoColor {
+				return m, nil
+			}
 			return m, m.sendResign()
-		case "esc", "q":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
 		}
 	case ErrMsg:
 		m.err = msg.Err.Error()
@@ -222,7 +233,10 @@ func (m *GameModel) View() string {
 	right := lipgloss.NewStyle().Bold(true).Render("Moves") + "\n" + moveView
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right))
 	sb.WriteString("\n")
-	if !m.gameOver {
+	if m.myColor == chess.NoColor {
+		sb.WriteString(gameStatusStyle.Render("Spectating"))
+		sb.WriteString("\n")
+	} else if !m.gameOver {
 		sb.WriteString(m.moveInput.View())
 		sb.WriteString("\n")
 	}
@@ -238,9 +252,14 @@ func (m *GameModel) View() string {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
 		sb.WriteString("\n")
 	}
-	help := "enter:move  u:undo  ctrl+r:resign  esc:lobby"
-	if m.gameOver {
+	var help string
+	switch {
+	case m.myColor == chess.NoColor:
 		help = "esc:back to lobby"
+	case m.gameOver:
+		help = "esc:back to lobby"
+	default:
+		help = "enter:move  u:undo  ctrl+r:resign  esc:lobby"
 	}
 	sb.WriteString(gameHelpStyle.Render(help))
 	sb.WriteString("\n")

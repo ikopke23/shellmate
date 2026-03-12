@@ -62,23 +62,30 @@ func (h *Hub) GetGameHistory(ctx context.Context, username string) ([]HistoryRec
 }
 
 // Register adds a new authenticated client to the hub.
+// If there is already a connection for this username, the old connection is closed.
 func (h *Hub) Register(username string, conn *websocket.Conn) *Client {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	c := &Client{
 		username: username,
 		conn:     conn,
 		send:     make(chan []byte, 256),
 		hub:      h,
 	}
+	h.mu.Lock()
+	if existing, ok := h.clients[username]; ok {
+		existing.conn.Close()
+	}
 	h.clients[username] = c
+	h.mu.Unlock()
 	return c
 }
 
 // Unregister removes a client and cleans up any games they were in.
+// Only deletes the client entry if it still points to the same client (guards against eviction race).
 func (h *Hub) Unregister(c *Client) {
 	h.mu.Lock()
-	delete(h.clients, c.username)
+	if stored, ok := h.clients[c.username]; ok && stored == c {
+		delete(h.clients, c.username)
+	}
 	close(c.send)
 	// snapshot games to clean up spectators from, without holding lock
 	var spectatorGames []*Game

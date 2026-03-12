@@ -17,10 +17,10 @@ type DB struct {
 
 // User represents a row from the users table.
 type User struct {
-	ID          string
-	Username    string
-	Elo         int
-	GamesPlayed int
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	Elo         int    `json:"elo"`
+	GamesPlayed int    `json:"games_played"`
 }
 
 // GameRecord holds everything needed to write a completed game.
@@ -37,15 +37,16 @@ type GameRecord struct {
 
 // HistoryRecord is one row from game history.
 type HistoryRecord struct {
-	ID             string
-	White          string
-	Black          string
-	Result         string
-	WhiteEloBefore int
-	BlackEloBefore int
-	WhiteEloAfter  int
-	BlackEloAfter  int
-	PlayedAt       time.Time
+	ID             string    `json:"id"`
+	White          string    `json:"white"`
+	Black          string    `json:"black"`
+	Result         string    `json:"result"`
+	WhiteEloBefore int       `json:"white_elo_before"`
+	BlackEloBefore int       `json:"black_elo_before"`
+	WhiteEloAfter  int       `json:"white_elo_after"`
+	BlackEloAfter  int       `json:"black_elo_after"`
+	PGN            string    `json:"pgn,omitempty"`
+	PlayedAt       time.Time `json:"played_at"`
 }
 
 // NewDB connects to Postgres using connStr, applies the migration at migrationSQL, and returns a DB.
@@ -127,7 +128,7 @@ func (d *DB) SaveGameAndUpdateElo(ctx context.Context, g GameRecord, whiteElo, b
 // GetGameHistory returns the 100 most recent games where username is white or black, ordered by played_at DESC.
 func (d *DB) GetGameHistory(ctx context.Context, username string) ([]HistoryRecord, error) {
 	rows, err := d.pool.Query(ctx,
-		`SELECT id, white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, played_at
+		`SELECT id, white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn, played_at
 		 FROM games
 		 WHERE white = $1 OR black = $1
 		 ORDER BY played_at DESC
@@ -141,7 +142,7 @@ func (d *DB) GetGameHistory(ctx context.Context, username string) ([]HistoryReco
 	var records []HistoryRecord
 	for rows.Next() {
 		var r HistoryRecord
-		if err := rows.Scan(&r.ID, &r.White, &r.Black, &r.Result, &r.WhiteEloBefore, &r.BlackEloBefore, &r.WhiteEloAfter, &r.BlackEloAfter, &r.PlayedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.White, &r.Black, &r.Result, &r.WhiteEloBefore, &r.BlackEloBefore, &r.WhiteEloAfter, &r.BlackEloAfter, &r.PGN, &r.PlayedAt); err != nil {
 			return nil, err
 		}
 		records = append(records, r)

@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"net/http"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
@@ -9,6 +10,9 @@ import (
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
 )
+
+type historyLoadedMsg struct{ records []shared.HistoryRecord }
+type leaderboardLoadedMsg struct{ players []shared.PlayerInfo }
 
 // Model is the root bubbletea model.
 type Model struct {
@@ -57,6 +61,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleScreenChange(msg)
 	case screens.WSMsg:
 		return m.handleWSMsg(msg)
+	case historyLoadedMsg:
+		if m.history != nil {
+			m.history.SetGames(msg.records)
+		}
+		return m, nil
+	case leaderboardLoadedMsg:
+		if m.leaderboard != nil {
+			m.leaderboard.SetPlayers(msg.players)
+		}
+		return m, nil
 	case screens.ErrMsg:
 		// pass through to active screen
 	}
@@ -115,6 +129,7 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 	case screens.ScreenHistory:
 		m.history = screens.NewHistoryModel(m.username, m.conn)
 		m.screen = screens.ScreenHistory
+		return m, m.fetchHistory()
 	case screens.ScreenReplay:
 		m.replay = screens.NewReplayModel()
 		if rec, ok := msg.Data.(shared.HistoryRecord); ok && rec.PGN != "" {
@@ -124,6 +139,7 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 	case screens.ScreenLeaderboard:
 		m.leaderboard = screens.NewLeaderboardModel(m.conn)
 		m.screen = screens.ScreenLeaderboard
+		return m, m.fetchLeaderboard()
 	case screens.ScreenGame:
 		// game screen is set up by game_start messages
 		m.screen = screens.ScreenGame
@@ -166,6 +182,13 @@ func (m Model) handleWSMsg(msg screens.WSMsg) (tea.Model, tea.Cmd) {
 	case shared.MsgUndoRequest:
 		if m.game != nil {
 			m.game.SetPendingUndoPrompt(true)
+		}
+	case shared.MsgUndoResponse:
+		var payload shared.UndoResponse
+		if err := json.Unmarshal(env.Payload, &payload); err == nil {
+			if m.game != nil && !payload.Accept {
+				m.game.ClearPendingUndo()
+			}
 		}
 	case shared.MsgUndoAccepted:
 		var payload shared.UndoAccepted
@@ -233,13 +256,48 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
+func (m *Model) fetchHistory() tea.Cmd {
+	return func() tea.Msg {
+		url := "http://" + m.serverAddr + "/history?user=" + m.username
+		resp, err := http.Get(url)
+		if err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		defer resp.Body.Close()
+		var records []shared.HistoryRecord
+		if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		return historyLoadedMsg{records: records}
+	}
+}
+
+func (m *Model) fetchLeaderboard() tea.Cmd {
+	return func() tea.Msg {
+		url := "http://" + m.serverAddr + "/leaderboard"
+		resp, err := http.Get(url)
+		if err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		defer resp.Body.Close()
+		var players []shared.PlayerInfo
+		if err := json.NewDecoder(resp.Body).Decode(&players); err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		return leaderboardLoadedMsg{players: players}
+	}
+}
+
 // startGameFromMsg creates a new GameModel when the server notifies of a game start.
 func (m *Model) startGameFromMsg(payload shared.GameStart) {
 	var myColor chess.Color
-	if m.username == payload.White {
+	switch m.username {
+	case payload.White:
 		myColor = chess.White
-	} else {
+	case payload.Black:
 		myColor = chess.Black
+	default:
+		myColor = chess.NoColor
 	}
 	m.game = screens.NewGameModel(payload.GameID, myColor, m.conn, m.username)
 	m.screen = screens.ScreenGame
