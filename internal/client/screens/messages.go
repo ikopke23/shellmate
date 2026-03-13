@@ -21,6 +21,7 @@ const (
 type ConnectedMsg struct {
 	Conn     *websocket.Conn
 	Username string
+	FirstMsg *shared.Envelope // first message read from server (lobby_state on success)
 }
 
 // ScreenChangeMsg requests a screen transition.

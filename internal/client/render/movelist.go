@@ -7,10 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	highlightRowBg    = lipgloss.Color("#3C3C3C")
-	highlightRowStyle = lipgloss.NewStyle().Background(highlightRowBg)
-)
+var highlightMoveStyle = lipgloss.NewStyle().Background(lipgloss.Color("#3C3C3C"))
 
 // MoveList renders the move history for a chess game as a scrollable panel.
 // Moves are displayed in pairs: "1. e4   e5", "2. Nf3  Nc6", etc.
@@ -71,12 +68,19 @@ func (m *MoveList) View() string {
 		if whiteIdx+1 < len(m.moves) {
 			black = m.moves[whiteIdx+1]
 		}
-		line := fmt.Sprintf("%-3s %-7s %-7s", fmt.Sprintf("%d.", moveNum), white, black)
-		isHighlighted := m.currentIdx >= 0 && m.currentIdx/2 == row
-		if isHighlighted {
-			sb.WriteString(highlightRowStyle.Render(line))
+		numStr := fmt.Sprintf("%-3s ", fmt.Sprintf("%d.", moveNum))
+		whiteStr := fmt.Sprintf("%-7s", white)
+		blackStr := fmt.Sprintf(" %-7s", black)
+		sb.WriteString(numStr)
+		if m.currentIdx == whiteIdx {
+			sb.WriteString(highlightMoveStyle.Render(whiteStr))
 		} else {
-			sb.WriteString(line)
+			sb.WriteString(whiteStr)
+		}
+		if m.currentIdx == whiteIdx+1 {
+			sb.WriteString(highlightMoveStyle.Render(blackStr))
+		} else {
+			sb.WriteString(blackStr)
 		}
 		sb.WriteString("\n")
 		rendered++

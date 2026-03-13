@@ -128,9 +128,9 @@ type HistoryRecord struct {
 
 // GameStart is sent by the server when a game begins.
 type GameStart struct {
-	GameID  string `json:"game_id"`
-	White   string `json:"white"`
-	Black   string `json:"black"`
+	GameID string `json:"game_id"`
+	White  string `json:"white"`
+	Black  string `json:"black"`
 }
 
 // Resign is sent by a player to forfeit the game.

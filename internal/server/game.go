@@ -32,13 +32,6 @@ func NewGame(id string, white, black *Client) *Game {
 	}
 }
 
-// AddSpectator adds a spectator to the game.
-func (g *Game) AddSpectator(c *Client) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.spectators = append(g.spectators, c)
-}
-
 // RemoveSpectator removes a spectator.
 func (g *Game) RemoveSpectator(c *Client) {
 	g.mu.Lock()
@@ -276,4 +269,3 @@ func (g *Game) handleGameOver(ctx context.Context, hub *Hub) {
 	}
 	g.Broadcast(overMsg)
 }
-

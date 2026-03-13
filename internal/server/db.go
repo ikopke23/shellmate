@@ -169,4 +169,3 @@ func (d *DB) GetLeaderboard(ctx context.Context) ([]User, error) {
 	}
 	return users, rows.Err()
 }
-

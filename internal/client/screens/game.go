@@ -20,21 +20,23 @@ var (
 
 // GameModel is the active game screen.
 type GameModel struct {
-	gameID           string
-	board            *render.Board
-	moveList         *render.MoveList
-	chess            *chess.Game
-	myColor          chess.Color
-	moveInput        textinput.Model
-	statusMsg        string
-	conn             *websocket.Conn
-	username         string
-	gameOver         bool
-	result           string
-	moves            []string
-	pendingUndo      bool
+	gameID            string
+	board             *render.Board
+	moveList          *render.MoveList
+	chess             *chess.Game
+	myColor           chess.Color
+	moveInput         textinput.Model
+	statusMsg         string
+	conn              *websocket.Conn
+	username          string
+	gameOver          bool
+	result            string
+	moves             []string
+	pendingUndo       bool
 	pendingUndoPrompt bool
-	err              string
+	err               string
+	selectedSq        chess.Square
+	hasSelected       bool
 }
 
 // NewGameModel creates a new game screen.
@@ -124,6 +126,38 @@ func (m *GameModel) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if m.myColor != chess.NoColor && !m.gameOver && m.chess.Position().Turn() == m.myColor {
+				sq, ok := m.squareFromMouse(msg.X, msg.Y)
+				if ok {
+					pos := m.chess.Position()
+					board := pos.Board()
+					piece := board.Piece(sq)
+					if !m.hasSelected {
+						if piece != chess.NoPiece && piece.Color() == m.myColor {
+							m.selectedSq = sq
+							m.hasSelected = true
+							m.board.SetSelected(sq)
+						}
+					} else if sq == m.selectedSq {
+						m.hasSelected = false
+						m.board.ClearSelected()
+					} else if piece != chess.NoPiece && piece.Color() == m.myColor {
+						m.selectedSq = sq
+						m.board.SetSelected(sq)
+					} else {
+						san := m.mouseToSAN(m.selectedSq, sq)
+						m.hasSelected = false
+						m.board.ClearSelected()
+						if san != "" {
+							return m, m.sendMoveStr(san)
+						}
+					}
+				}
+			}
+		}
+		return m, nil
 	case tea.KeyMsg:
 		if m.pendingUndoPrompt {
 			switch msg.String() {
@@ -173,6 +207,10 @@ func (m *GameModel) sendMove() tea.Cmd {
 		return nil
 	}
 	m.moveInput.SetValue("")
+	return m.sendMoveStr(san)
+}
+
+func (m *GameModel) sendMoveStr(san string) tea.Cmd {
 	return func() tea.Msg {
 		data, err := shared.Encode(shared.MsgMove, shared.Move{GameID: m.gameID, SAN: san})
 		if err != nil {
@@ -183,6 +221,47 @@ func (m *GameModel) sendMove() tea.Cmd {
 		}
 		return nil
 	}
+}
+
+func (m *GameModel) squareFromMouse(x, y int) (chess.Square, bool) {
+	if x < 2 || x > 49 || y < 0 || y > 23 {
+		return 0, false
+	}
+	cellCol := (x - 2) / 6
+	cellRow := y / 3
+	if cellCol < 0 || cellCol > 7 {
+		return 0, false
+	}
+	var rankIdx, fileIdx int
+	if m.board.Flipped() {
+		rankIdx = cellRow
+		fileIdx = 7 - cellCol
+	} else {
+		rankIdx = 7 - cellRow
+		fileIdx = cellCol
+	}
+	return chess.Square(rankIdx*8 + fileIdx), true
+}
+
+func (m *GameModel) mouseToSAN(from, to chess.Square) string {
+	pos := m.chess.Position()
+	var bestMove *chess.Move
+	for _, mv := range m.chess.ValidMoves() {
+		if mv.S1() == from && mv.S2() == to {
+			if mv.Promo() == chess.Queen {
+				bestMove = mv
+				break
+			}
+			if bestMove == nil {
+				bestMove = mv
+			}
+		}
+	}
+	if bestMove == nil {
+		return ""
+	}
+	san := chess.AlgebraicNotation{}.Encode(pos, bestMove)
+	return san
 }
 
 func (m *GameModel) sendUndo() tea.Cmd {
@@ -237,6 +316,15 @@ func (m *GameModel) View() string {
 		sb.WriteString(gameStatusStyle.Render("Spectating"))
 		sb.WriteString("\n")
 	} else if !m.gameOver {
+		turn := m.chess.Position().Turn()
+		var turnText string
+		if turn == chess.White {
+			turnText = "white's move"
+		} else {
+			turnText = "black's move"
+		}
+		sb.WriteString(gameStatusStyle.Render(turnText))
+		sb.WriteString("\n")
 		sb.WriteString(m.moveInput.View())
 		sb.WriteString("\n")
 	}
@@ -259,7 +347,7 @@ func (m *GameModel) View() string {
 	case m.gameOver:
 		help = "esc:back to lobby"
 	default:
-		help = "enter:move  u:undo  ctrl+r:resign  esc:lobby"
+		help = "enter/click:move  u:undo  ctrl+r:resign  esc:lobby"
 	}
 	sb.WriteString(gameHelpStyle.Render(help))
 	sb.WriteString("\n")

@@ -197,7 +197,7 @@ func (h *Hub) Route(ctx context.Context, c *Client, env shared.Envelope) {
 			sendError(c, "invalid spectate_game payload")
 			return
 		}
-		h.handleSpectateGame(c, payload)
+		h.handleSpectateGame(ctx, c, payload)
 	case shared.MsgMove:
 		var payload shared.Move
 		if err := json.Unmarshal(env.Payload, &payload); err != nil {
@@ -269,6 +269,7 @@ func (h *Hub) handleJoinGame(ctx context.Context, c *Client, payload shared.Join
 	g.mu.Unlock()
 	h.mu.Unlock()
 	slog.Info("player joined game", "game_id", payload.GameID, "black", c.username)
+	go h.closeOpenGamesForUsers(ctx, whiteUsername, c.username, payload.GameID)
 	// notify both players the game has started
 	startMsg, _ := shared.Encode(shared.MsgGameStart, shared.GameStart{
 		GameID: payload.GameID,
@@ -279,7 +280,34 @@ func (h *Hub) handleJoinGame(ctx context.Context, c *Client, payload shared.Join
 	h.BroadcastLobby(ctx)
 }
 
-func (h *Hub) handleSpectateGame(c *Client, payload shared.SpectateGame) {
+// closeOpenGamesForUsers removes any open (waiting) games created by either player,
+// excluding the game that just started. Runs in the background after a game begins.
+func (h *Hub) closeOpenGamesForUsers(ctx context.Context, white, black, startedGameID string) {
+	h.mu.Lock()
+	var toRemove []string
+	for id, g := range h.games {
+		if id == startedGameID {
+			continue
+		}
+		g.mu.Lock()
+		isOpen := g.black == nil
+		createdByPlayer := g.white != nil && (g.white.username == white || g.white.username == black)
+		g.mu.Unlock()
+		if isOpen && createdByPlayer {
+			toRemove = append(toRemove, id)
+		}
+	}
+	for _, id := range toRemove {
+		delete(h.games, id)
+		slog.Info("closed orphaned open game", "game_id", id)
+	}
+	h.mu.Unlock()
+	if len(toRemove) > 0 {
+		h.BroadcastLobby(ctx)
+	}
+}
+
+func (h *Hub) handleSpectateGame(ctx context.Context, c *Client, payload shared.SpectateGame) {
 	h.mu.RLock()
 	g, ok := h.games[payload.GameID]
 	h.mu.RUnlock()
@@ -287,9 +315,45 @@ func (h *Hub) handleSpectateGame(c *Client, payload shared.SpectateGame) {
 		sendError(c, "game not found")
 		return
 	}
-	g.AddSpectator(c)
+	g.mu.Lock()
+	g.spectators = append(g.spectators, c)
 	c.game = payload.GameID
+	started := g.black != nil
+	var whiteUsername, blackUsername string
+	var moveList []string
+	if started {
+		whiteUsername = g.white.username
+		blackUsername = g.black.username
+		notation := chess.AlgebraicNotation{}
+		positions := g.chess.Positions()
+		for i, m := range g.chess.Moves() {
+			moveList = append(moveList, notation.Encode(positions[i], m))
+		}
+	}
+	g.mu.Unlock()
 	slog.Info("spectator joined game", "game_id", payload.GameID, "spectator", c.username)
+	if started {
+		startMsg, _ := shared.Encode(shared.MsgGameStart, shared.GameStart{
+			GameID: payload.GameID,
+			White:  whiteUsername,
+			Black:  blackUsername,
+		})
+		c.Send(startMsg)
+		if len(moveList) > 0 {
+			type moveMsg struct {
+				GameID string   `json:"game_id"`
+				SAN    string   `json:"san"`
+				Moves  []string `json:"moves"`
+			}
+			moveData, _ := shared.Encode(shared.MsgMove, moveMsg{
+				GameID: payload.GameID,
+				SAN:    moveList[len(moveList)-1],
+				Moves:  moveList,
+			})
+			c.Send(moveData)
+		}
+	}
+	h.BroadcastLobby(ctx)
 }
 
 func (h *Hub) handleMove(ctx context.Context, c *Client, payload shared.Move) {
@@ -524,4 +588,3 @@ func generateID() string {
 	}
 	return fmt.Sprintf("%x", b)
 }
-

@@ -56,7 +56,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.username = msg.Username
 		m.lobby = screens.NewLobbyModel(msg.Username, msg.Conn)
 		m.screen = screens.ScreenLobby
-		return m, m.listenWS()
+		cmds := []tea.Cmd{m.listenWS()}
+		if msg.FirstMsg != nil {
+			updated, cmd := m.handleWSMsg(screens.WSMsg{Env: *msg.FirstMsg})
+			if um, ok := updated.(Model); ok {
+				m = um
+			}
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		return m, tea.Batch(cmds...)
 	case screens.ScreenChangeMsg:
 		return m.handleScreenChange(msg)
 	case screens.WSMsg:

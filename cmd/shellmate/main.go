@@ -16,7 +16,7 @@ func main() {
 		serverAddr = os.Args[1]
 	}
 	model := client.NewModel(serverAddr)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

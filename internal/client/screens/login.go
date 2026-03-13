@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -138,7 +139,23 @@ func (m *LoginModel) connectCmd() tea.Cmd {
 			conn.Close()
 			return ErrMsg{Err: fmt.Errorf("send error: %w", err)}
 		}
-		return ConnectedMsg{Conn: conn, Username: username}
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			conn.Close()
+			return ErrMsg{Err: fmt.Errorf("server closed connection: %w", err)}
+		}
+		env, err := shared.Decode(raw)
+		if err != nil {
+			conn.Close()
+			return ErrMsg{Err: fmt.Errorf("bad server response: %w", err)}
+		}
+		if env.Type == shared.MsgError {
+			var payload shared.ErrorMsg
+			_ = json.Unmarshal(env.Payload, &payload)
+			conn.Close()
+			return ErrMsg{Err: fmt.Errorf("rejected: %s", payload.Message)}
+		}
+		return ConnectedMsg{Conn: conn, Username: username, FirstMsg: &env}
 	}
 }
 
