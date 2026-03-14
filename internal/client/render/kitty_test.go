@@ -140,3 +140,39 @@ func TestBuildPlaceholderString_IDColorCode(t *testing.T) {
 		t.Errorf("expected color code for id=2, not found in output")
 	}
 }
+
+func TestRenderBoardKitty_ReturnsSomething(t *testing.T) {
+	b := NewBoard(chess.NewGame().Position(), false)
+	var buf bytes.Buffer
+	result := renderBoardKitty(b, &buf)
+	if result == "" {
+		t.Error("expected non-empty placeholder string")
+	}
+	if !strings.Contains(result, kittyPlaceholder) {
+		t.Error("expected placeholder chars in result")
+	}
+	// Upload sequence should have been written to buf
+	if !strings.Contains(buf.String(), "\033_G") {
+		t.Error("expected Kitty APC sequence written to writer")
+	}
+}
+
+func TestRenderBoardKitty_CacheHit(t *testing.T) {
+	// Reset cache state for test isolation
+	kittyCacheMu.Lock()
+	kittyCacheMap = map[kittyCacheKey]string{}
+	kittyActiveID = 1
+	kittyCacheMu.Unlock()
+
+	b := NewBoard(chess.NewGame().Position(), false)
+	var buf1, buf2 bytes.Buffer
+	r1 := renderBoardKitty(b, &buf1)
+	r2 := renderBoardKitty(b, &buf2)
+	if r1 != r2 {
+		t.Error("expected identical results for same board state")
+	}
+	// Second call should not upload again
+	if buf2.Len() != 0 {
+		t.Errorf("expected no upload on cache hit, got %d bytes written", buf2.Len())
+	}
+}

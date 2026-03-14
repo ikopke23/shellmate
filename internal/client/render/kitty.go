@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
-	"image/color"
 	"image/draw"
 	"io"
 	"os"
@@ -157,8 +156,77 @@ func buildPlaceholderString(b *Board, id uint8) string {
 	return sb.String()
 }
 
-// Silence unused import errors until later tasks add the functions.
+type kittyCacheKey struct {
+	fen         string
+	from, to    chess.Square
+	sel         chess.Square
+	hasLastMove bool
+	hasSelected bool
+	flipped     bool
+	cellCols    int
+	cellRows    int
+}
+
 var (
-	_ color.RGBA
-	_ sync.Mutex
+	kittyCacheMu  sync.Mutex
+	kittyCacheMap       = map[kittyCacheKey]string{} // key → placeholder string
+	kittyActiveID uint8 = 1                          // current image ID (1 or 2)
 )
+
+func kittyBoardKey(b *Board) kittyCacheKey {
+	pos := b.position
+	if pos == nil {
+		pos = chess.NewGame().Position()
+	}
+	return kittyCacheKey{
+		fen:         pos.String(),
+		from:        b.lastMoveFrom,
+		to:          b.lastMoveTo,
+		sel:         b.selectedSquare,
+		hasLastMove: b.hasLastMove,
+		hasSelected: b.hasSelected,
+		flipped:     b.flipped,
+		cellCols:    b.cellCols,
+		cellRows:    b.cellRows,
+	}
+}
+
+// clearKittyCache deletes active Kitty images from the terminal and wipes the cache.
+// w is the writer to send delete sequences to (os.Stdout in production).
+func clearKittyCache(w io.Writer) {
+	kittyCacheMu.Lock()
+	defer kittyCacheMu.Unlock()
+	if len(kittyCacheMap) > 0 {
+		fmt.Fprintf(w, "\033_Ga=d,d=I,i=1\033\\")
+		fmt.Fprintf(w, "\033_Ga=d,d=I,i=2\033\\")
+		kittyCacheMap = map[kittyCacheKey]string{}
+	}
+}
+
+// renderBoardKitty uploads the board image to the Kitty terminal (via w) if the
+// board state has changed, then returns the placeholder string for Bubbletea.
+func renderBoardKitty(b *Board, w io.Writer) string {
+	key := kittyBoardKey(b)
+	kittyCacheMu.Lock()
+	if s, ok := kittyCacheMap[key]; ok {
+		kittyCacheMu.Unlock()
+		return s
+	}
+	// Ping-pong: switch to the other ID.
+	oldID := kittyActiveID
+	newID := uint8(3) - oldID // 1↔2
+	kittyActiveID = newID
+	kittyCacheMu.Unlock()
+
+	img := composeBoard(b)
+	buildKittyUpload(img, newID, w)
+	// Delete the old image to free terminal memory.
+	fmt.Fprintf(w, "\033_Ga=d,d=I,i=%d\033\\", oldID)
+
+	placeholder := buildPlaceholderString(b, newID)
+
+	kittyCacheMu.Lock()
+	kittyCacheMap[key] = placeholder
+	kittyCacheMu.Unlock()
+	return placeholder
+}
