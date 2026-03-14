@@ -105,3 +105,38 @@ func TestBuildKittyUpload_Chunking(t *testing.T) {
 		t.Errorf("last chunk should have m=0: %q", lastChunk[:min(len(lastChunk), 80)])
 	}
 }
+
+func TestBuildPlaceholderString_RowCount(t *testing.T) {
+	b := NewBoard(chess.NewGame().Position(), false)
+	b.cellCols = 6
+	b.cellRows = 3
+	s := buildPlaceholderString(b, 1)
+	// 8 ranks × 3 lines + 1 file label line = 25 lines
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) != 25 {
+		t.Errorf("expected 25 lines (8*3+1), got %d", len(lines))
+	}
+}
+
+func TestBuildPlaceholderString_PlaceholderChars(t *testing.T) {
+	b := NewBoard(chess.NewGame().Position(), false)
+	b.cellCols = 6
+	b.cellRows = 3
+	s := buildPlaceholderString(b, 1)
+	lines := strings.Split(s, "\n")
+	// First content line (line 0): should have 8*6=48 placeholder chars
+	count := strings.Count(lines[0], kittyPlaceholder)
+	if count != 48 {
+		t.Errorf("expected 48 placeholder chars per line, got %d", count)
+	}
+}
+
+func TestBuildPlaceholderString_IDColorCode(t *testing.T) {
+	b := NewBoard(chess.NewGame().Position(), false)
+	b.cellCols = 6
+	b.cellRows = 3
+	s := buildPlaceholderString(b, 2)
+	if !strings.Contains(s, "\033[38;5;2m") {
+		t.Errorf("expected color code for id=2, not found in output")
+	}
+}

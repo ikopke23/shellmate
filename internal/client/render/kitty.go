@@ -111,10 +111,54 @@ func buildKittyUpload(img *image.RGBA, id uint8, w io.Writer) {
 	}
 }
 
+// kittyPlaceholder is U+10EEEE encoded as UTF-8, the Kitty unicode placeholder char.
+const kittyPlaceholder = "\U0010EEEE"
+
+// buildPlaceholderString returns the full board view string using Kitty unicode
+// placeholders. Includes rank labels (left) and file labels (bottom) matching
+// the ANSI layout. id is the Kitty image ID to reference.
+func buildPlaceholderString(b *Board, id uint8) string {
+	rankOrder := [8]int{7, 6, 5, 4, 3, 2, 1, 0}
+	fileOrder := [8]int{0, 1, 2, 3, 4, 5, 6, 7}
+	if b.flipped {
+		rankOrder = [8]int{0, 1, 2, 3, 4, 5, 6, 7}
+		fileOrder = [8]int{7, 6, 5, 4, 3, 2, 1, 0}
+	}
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA"))
+	cols := b.cellCols * 8
+	midLine := b.cellRows / 2
+	colorCode := fmt.Sprintf("\033[38;5;%dm", id)
+	resetCode := "\033[39m"
+	placeholderRow := strings.Repeat(kittyPlaceholder, cols)
+
+	var sb strings.Builder
+	for _, rankIdx := range rankOrder {
+		rankNum := rankIdx + 1
+		for line := 0; line < b.cellRows; line++ {
+			if line == midLine {
+				sb.WriteString(labelStyle.Render(string(rune('0'+rankNum)) + " "))
+			} else {
+				sb.WriteString("  ")
+			}
+			sb.WriteString(colorCode)
+			sb.WriteString(placeholderRow)
+			sb.WriteString(resetCode)
+			sb.WriteByte('\n')
+		}
+	}
+	sb.WriteString("  ")
+	for _, fileIdx := range fileOrder {
+		label := string(rune('a' + fileIdx))
+		leftPad := (b.cellCols - 1) / 2
+		rightPad := b.cellCols - 1 - leftPad
+		sb.WriteString(labelStyle.Render(strings.Repeat(" ", leftPad) + label + strings.Repeat(" ", rightPad)))
+	}
+	sb.WriteByte('\n')
+	return sb.String()
+}
+
 // Silence unused import errors until later tasks add the functions.
 var (
 	_ color.RGBA
-	_ strings.Builder
 	_ sync.Mutex
-	_ lipgloss.Style
 )
