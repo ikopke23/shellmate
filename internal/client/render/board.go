@@ -1,6 +1,7 @@
 package render
 
 import (
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -14,28 +15,7 @@ var (
 	highlightDarkBg  = lipgloss.Color("#AABA44")
 	selectedLightBg  = lipgloss.Color("#F6F669")
 	selectedDarkBg   = lipgloss.Color("#DAD414")
-	pieceDarkFg      = lipgloss.Color("#2D1B00")
-	pieceLightFg     = lipgloss.Color("#FFFCF0")
 )
-
-var pieceSymbols = map[chess.Color]map[chess.PieceType]string{
-	chess.White: {
-		chess.King:   "\u2654",
-		chess.Queen:  "\u2655",
-		chess.Rook:   "\u2656",
-		chess.Bishop: "\u2657",
-		chess.Knight: "\u2658",
-		chess.Pawn:   "\u2659",
-	},
-	chess.Black: {
-		chess.King:   "\u265a",
-		chess.Queen:  "\u265b",
-		chess.Rook:   "\u265c",
-		chess.Bishop: "\u265d",
-		chess.Knight: "\u265e",
-		chess.Pawn:   "\u265f",
-	},
-}
 
 // Board renders a chess board using lipgloss.
 // It holds display state: the current chess.Position, which squares are highlighted,
@@ -48,6 +28,8 @@ type Board struct {
 	flipped        bool
 	selectedSquare chess.Square
 	hasSelected    bool
+	cellCols       int
+	cellRows       int
 }
 
 // NewBoard creates a board in the starting position, white at bottom.
@@ -56,7 +38,22 @@ func NewBoard(pos *chess.Position, flipped bool) *Board {
 		position:    pos,
 		flipped:     flipped,
 		hasLastMove: false,
+		cellCols:    6,
+		cellRows:    3,
 	}
+}
+
+// CellCols returns the current cell width in terminal columns.
+func (b *Board) CellCols() int { return b.cellCols }
+
+// CellRows returns the current cell height in terminal rows.
+func (b *Board) CellRows() int { return b.cellRows }
+
+// SetCellSize updates the cell dimensions and clears the render cache.
+func (b *Board) SetCellSize(cols, rows int) {
+	b.cellCols = cols
+	b.cellRows = rows
+	ClearRenderCache()
 }
 
 // SetPosition updates the board to a new position with last-move highlighting.
@@ -95,6 +92,9 @@ func (b *Board) Flipped() bool {
 
 // View returns the rendered board as a string.
 func (b *Board) View() string {
+	if kittyEnabled {
+		return renderBoardKitty(b, os.Stdout)
+	}
 	var sb strings.Builder
 	pos := b.position
 	if pos == nil {
@@ -111,9 +111,8 @@ func (b *Board) View() string {
 	for _, rankIdx := range rankOrder {
 		rankNum := rankIdx + 1
 		type cellInfo struct {
-			bg     lipgloss.Color
-			fg     lipgloss.Color
-			symbol string
+			bgHex string
+			lines []string
 		}
 		cells := make([]cellInfo, 8)
 		for i, fileIdx := range fileOrder {
@@ -121,55 +120,33 @@ func (b *Board) View() string {
 			isLight := (fileIdx+rankIdx)%2 != 0
 			isSelected := b.hasSelected && sq == b.selectedSquare
 			isHighlighted := b.hasLastMove && (sq == b.lastMoveFrom || sq == b.lastMoveTo)
-			var bg lipgloss.Color
+			var bgHex string
 			switch {
 			case isSelected && isLight:
-				bg = selectedLightBg
+				bgHex = string(selectedLightBg)
 			case isSelected && !isLight:
-				bg = selectedDarkBg
+				bgHex = string(selectedDarkBg)
 			case isHighlighted && isLight:
-				bg = highlightLightBg
+				bgHex = string(highlightLightBg)
 			case isHighlighted && !isLight:
-				bg = highlightDarkBg
+				bgHex = string(highlightDarkBg)
 			case isLight:
-				bg = lightSquareBg
+				bgHex = string(lightSquareBg)
 			default:
-				bg = darkSquareBg
+				bgHex = string(darkSquareBg)
 			}
 			p := board.Piece(sq)
-			var fg lipgloss.Color
-			if p == chess.NoPiece {
-				if isLight {
-					fg = pieceDarkFg
-				} else {
-					fg = pieceLightFg
-				}
-			} else if p.Color() == chess.White {
-				fg = pieceDarkFg
-			} else {
-				fg = pieceLightFg
-			}
-			symbol := " "
-			if p != chess.NoPiece {
-				symbol = pieceSymbols[p.Color()][p.Type()]
-			}
-			cells[i] = cellInfo{bg: bg, fg: fg, symbol: symbol}
+			cells[i] = cellInfo{bgHex: bgHex, lines: RenderCell(p, bgHex, b.cellCols, b.cellRows)}
 		}
-		// Each rank renders as 3 terminal lines; piece centered on the middle line.
-		// Cells are 6 chars wide x 3 lines tall for a visually square appearance.
-		for line := 0; line < 3; line++ {
-			if line == 1 {
+		midLine := b.cellRows / 2
+		for line := 0; line < b.cellRows; line++ {
+			if line == midLine {
 				sb.WriteString(labelStyle.Render(string(rune('0'+rankNum)) + " "))
 			} else {
 				sb.WriteString("  ")
 			}
 			for _, c := range cells {
-				style := lipgloss.NewStyle().Background(c.bg).Foreground(c.fg)
-				if line == 1 {
-					sb.WriteString(style.Render("  " + c.symbol + "   "))
-				} else {
-					sb.WriteString(style.Render("      "))
-				}
+				sb.WriteString(c.lines[line])
 			}
 			sb.WriteString("\n")
 		}
@@ -177,7 +154,9 @@ func (b *Board) View() string {
 	sb.WriteString("  ")
 	for _, fileIdx := range fileOrder {
 		label := string(rune('a' + fileIdx))
-		sb.WriteString(labelStyle.Render("  " + label + "   "))
+		leftPad := (b.cellCols - 1) / 2
+		rightPad := b.cellCols - 1 - leftPad
+		sb.WriteString(labelStyle.Render(strings.Repeat(" ", leftPad) + label + strings.Repeat(" ", rightPad)))
 	}
 	sb.WriteString("\n")
 	return sb.String()

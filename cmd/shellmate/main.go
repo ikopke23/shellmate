@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ikopke/shellmate/internal/client"
+	"github.com/ikopke/shellmate/internal/client/render"
 )
 
 // Usage: shellmate [server-addr]
@@ -15,6 +16,7 @@ func main() {
 	if len(os.Args) > 1 {
 		serverAddr = os.Args[1]
 	}
+	render.DetectKitty() // detect before Bubbletea takes over the terminal
 	model := client.NewModel(serverAddr)
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
