@@ -3,6 +3,7 @@ package screens
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -19,6 +20,9 @@ var (
 // ReplayModel provides step-through replay of a past game.
 type ReplayModel struct {
 	pgn       string
+	white     string
+	black     string
+	playedAt  time.Time
 	game      *chess.Game
 	moves     []*chess.Move
 	positions []*chess.Position
@@ -26,6 +30,7 @@ type ReplayModel struct {
 	stepIdx   int // current step (0 = start, len(moves) = end)
 	board     *render.Board
 	moveList  *render.MoveList
+	exportMsg string
 	err       string
 }
 
@@ -57,6 +62,13 @@ func (m *ReplayModel) LoadPGN(pgn string) error {
 	m.stepIdx = 0
 	m.updateView()
 	return nil
+}
+
+// SetMeta stores player names and date for export.
+func (m *ReplayModel) SetMeta(white, black string, playedAt time.Time) {
+	m.white = white
+	m.black = black
+	m.playedAt = playedAt
 }
 
 func (m *ReplayModel) updateView() {
@@ -98,6 +110,13 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.stepIdx++
 				m.updateView()
 			}
+		case "e":
+			path, err := exportPGN(m.white, m.black, m.playedAt, m.pgn)
+			if err != nil {
+				m.exportMsg = fmt.Sprintf("export error: %s", err)
+			} else {
+				m.exportMsg = fmt.Sprintf("exported: %s", path)
+			}
 		}
 	}
 	return m, nil
@@ -118,11 +137,15 @@ func (m *ReplayModel) View() string {
 		strings.Repeat(" ", 3) + stepInfo(m.stepIdx, len(m.moves)),
 	))
 	sb.WriteString("\n")
+	if m.exportMsg != "" {
+		sb.WriteString(replayStepStyle.Render(m.exportMsg))
+		sb.WriteString("\n")
+	}
 	if m.err != "" {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
 		sb.WriteString("\n")
 	}
-	sb.WriteString(replayHelpStyle.Render("left/h:back  right/l:forward  q/esc:back"))
+	sb.WriteString(replayHelpStyle.Render("left/h:back  right/l:forward  e:export  q/esc:back"))
 	sb.WriteString("\n")
 	return sb.String()
 }

@@ -10,6 +10,8 @@ import (
 	"github.com/ikopke/shellmate/internal/shared"
 )
 
+var historyExportStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00CC66"))
+
 var (
 	historyTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).Padding(0, 1)
 	historyCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
@@ -18,11 +20,12 @@ var (
 
 // HistoryModel shows past games for the logged-in user.
 type HistoryModel struct {
-	games    []shared.HistoryRecord
-	cursor   int
-	username string
-	conn     *websocket.Conn
-	err      string
+	games     []shared.HistoryRecord
+	cursor    int
+	username  string
+	conn      *websocket.Conn
+	exportMsg string
+	err       string
 }
 
 // NewHistoryModel creates a new history screen.
@@ -73,6 +76,16 @@ func (m *HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return ScreenChangeMsg{Screen: ScreenReplay, Data: g}
 				}
 			}
+		case "e":
+			if len(m.games) > 0 {
+				g := m.games[m.cursor]
+				path, err := exportPGN(g.White, g.Black, g.PlayedAt, g.PGN)
+				if err != nil {
+					m.exportMsg = fmt.Sprintf("export error: %s", err)
+				} else {
+					m.exportMsg = fmt.Sprintf("exported: %s", path)
+				}
+			}
 		}
 	}
 	return m, nil
@@ -95,11 +108,15 @@ func (m *HistoryModel) View() string {
 			cursor, g.White, g.Black, g.Result, g.PlayedAt.Format("2006-01-02 15:04")))
 	}
 	sb.WriteString("\n")
+	if m.exportMsg != "" {
+		sb.WriteString(historyExportStyle.Render(m.exportMsg))
+		sb.WriteString("\n")
+	}
 	if m.err != "" {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
 		sb.WriteString("\n")
 	}
-	sb.WriteString(historyHelpStyle.Render("enter:replay  q/esc:back"))
+	sb.WriteString(historyHelpStyle.Render("enter:replay  e:export  q/esc:back"))
 	sb.WriteString("\n")
 	return sb.String()
 }

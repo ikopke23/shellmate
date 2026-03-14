@@ -144,6 +144,7 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 		m.replay = screens.NewReplayModel()
 		if rec, ok := msg.Data.(shared.HistoryRecord); ok && rec.PGN != "" {
 			_ = m.replay.LoadPGN(rec.PGN)
+			m.replay.SetMeta(rec.White, rec.Black, rec.PlayedAt)
 		}
 		m.screen = screens.ScreenReplay
 	case screens.ScreenLeaderboard:
@@ -309,6 +310,6 @@ func (m *Model) startGameFromMsg(payload shared.GameStart) {
 	default:
 		myColor = chess.NoColor
 	}
-	m.game = screens.NewGameModel(payload.GameID, myColor, m.conn, m.username)
+	m.game = screens.NewGameModel(payload.GameID, payload.White, payload.Black, myColor, m.conn, m.username)
 	m.screen = screens.ScreenGame
 }

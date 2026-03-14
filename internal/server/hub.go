@@ -28,14 +28,22 @@ type Client struct {
 	username string
 	conn     *websocket.Conn
 	send     chan []byte
+	done     chan struct{}
+	doneOnce sync.Once
 	hub      *Hub
 	game     string // game ID the client is currently in, or ""
 }
 
-// Send queues a message for writing. Drops the message if the buffer is full.
+// closeDone closes the done channel exactly once.
+func (c *Client) closeDone() {
+	c.doneOnce.Do(func() { close(c.done) })
+}
+
+// Send queues a message for writing. Safe to call after the client is unregistered.
 func (c *Client) Send(msg []byte) {
 	select {
 	case c.send <- msg:
+	case <-c.done:
 	default:
 		slog.Warn("client send buffer full, dropping message", "username", c.username)
 	}
@@ -68,11 +76,13 @@ func (h *Hub) Register(username string, conn *websocket.Conn) *Client {
 		username: username,
 		conn:     conn,
 		send:     make(chan []byte, 256),
+		done:     make(chan struct{}),
 		hub:      h,
 	}
 	h.mu.Lock()
 	if existing, ok := h.clients[username]; ok {
 		existing.conn.Close()
+		existing.closeDone()
 	}
 	h.clients[username] = c
 	h.mu.Unlock()
@@ -86,7 +96,7 @@ func (h *Hub) Unregister(c *Client) {
 	if stored, ok := h.clients[c.username]; ok && stored == c {
 		delete(h.clients, c.username)
 	}
-	close(c.send)
+	c.closeDone()
 	// snapshot games to clean up spectators from, without holding lock
 	var spectatorGames []*Game
 	for _, g := range h.games {
@@ -534,14 +544,19 @@ func (h *Hub) HandleConn(ctx context.Context, conn *websocket.Conn) {
 	h.BroadcastLobby(ctx)
 	// Step 7: Start write goroutine.
 	go func() {
-		for msg := range client.send {
-			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-				slog.Error("write error", "username", client.username, "err", err)
-				conn.Close()
+		defer conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		for {
+			select {
+			case msg := <-client.send:
+				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					slog.Error("write error", "username", client.username, "err", err)
+					conn.Close()
+					return
+				}
+			case <-client.done:
 				return
 			}
 		}
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	}()
 	// Step 8: Read loop.
 	for {

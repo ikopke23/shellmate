@@ -3,6 +3,7 @@ package screens
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +22,8 @@ var (
 // GameModel is the active game screen.
 type GameModel struct {
 	gameID            string
+	white             string
+	black             string
 	board             *render.Board
 	moveList          *render.MoveList
 	chess             *chess.Game
@@ -37,10 +40,14 @@ type GameModel struct {
 	err               string
 	selectedSq        chess.Square
 	hasSelected       bool
+	pendingPromo      bool
+	pendingPromoFrom  chess.Square
+	pendingPromoTo    chess.Square
+	promoPopupY       int
 }
 
 // NewGameModel creates a new game screen.
-func NewGameModel(gameID string, myColor chess.Color, conn *websocket.Conn, username string) *GameModel {
+func NewGameModel(gameID, white, black string, myColor chess.Color, conn *websocket.Conn, username string) *GameModel {
 	g := chess.NewGame()
 	flipped := myColor == chess.Black
 	mi := textinput.New()
@@ -50,6 +57,8 @@ func NewGameModel(gameID string, myColor chess.Color, conn *websocket.Conn, user
 	mi.Width = 20
 	return &GameModel{
 		gameID:    gameID,
+		white:     white,
+		black:     black,
 		board:     render.NewBoard(g.Position(), flipped),
 		moveList:  render.NewMoveList(20),
 		chess:     g,
@@ -128,6 +137,12 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if m.pendingPromo {
+				if cmd := m.handlePromoClick(msg.X, msg.Y); cmd != nil {
+					return m, cmd
+				}
+				return m, nil
+			}
 			if m.myColor != chess.NoColor && !m.gameOver && m.chess.Position().Turn() == m.myColor {
 				sq, ok := m.squareFromMouse(msg.X, msg.Y)
 				if ok {
@@ -147,11 +162,18 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.selectedSq = sq
 						m.board.SetSelected(sq)
 					} else {
-						san := m.mouseToSAN(m.selectedSq, sq)
+						from := m.selectedSq
 						m.hasSelected = false
 						m.board.ClearSelected()
-						if san != "" {
-							return m, m.sendMoveStr(san)
+						if m.isPromotionMove(from, sq) {
+							m.pendingPromo = true
+							m.pendingPromoFrom = from
+							m.pendingPromoTo = sq
+						} else {
+							san := m.mouseToSAN(from, sq)
+							if san != "" {
+								return m, m.sendMoveStr(san)
+							}
 						}
 					}
 				}
@@ -159,6 +181,19 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		if m.pendingPromo {
+			switch msg.String() {
+			case "q", "r", "b", "n":
+				san := m.promoSAN(msg.String())
+				m.pendingPromo = false
+				if san != "" {
+					return m, m.sendMoveStr(san)
+				}
+			case "esc":
+				m.pendingPromo = false
+			}
+			return m, nil
+		}
 		if m.pendingUndoPrompt {
 			switch msg.String() {
 			case "y":
@@ -191,6 +226,23 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.sendResign()
+		case "ctrl+e":
+			path, err := exportPGN(m.white, m.black, time.Now(), m.chess.String())
+			if err != nil {
+				m.statusMsg = fmt.Sprintf("export error: %s", err)
+			} else {
+				m.statusMsg = fmt.Sprintf("exported: %s", path)
+			}
+		case "[":
+			rows := m.board.CellRows()
+			if rows > 2 {
+				m.board.SetCellSize((rows-1)*2, rows-1)
+			}
+		case "]":
+			rows := m.board.CellRows()
+			if rows < 8 {
+				m.board.SetCellSize((rows+1)*2, rows+1)
+			}
 		}
 	case ErrMsg:
 		m.err = msg.Err.Error()
@@ -224,11 +276,13 @@ func (m *GameModel) sendMoveStr(san string) tea.Cmd {
 }
 
 func (m *GameModel) squareFromMouse(x, y int) (chess.Square, bool) {
-	if x < 2 || x > 49 || y < 0 || y > 23 {
+	cellCols := m.board.CellCols()
+	cellRows := m.board.CellRows()
+	if x < 2 || x > 2+8*cellCols-1 || y < 0 || y > 8*cellRows-1 {
 		return 0, false
 	}
-	cellCol := (x - 2) / 6
-	cellRow := y / 3
+	cellCol := (x - 2) / cellCols
+	cellRow := y / cellRows
 	if cellCol < 0 || cellCol > 7 {
 		return 0, false
 	}
@@ -262,6 +316,62 @@ func (m *GameModel) mouseToSAN(from, to chess.Square) string {
 	}
 	san := chess.AlgebraicNotation{}.Encode(pos, bestMove)
 	return san
+}
+
+func (m *GameModel) isPromotionMove(from, to chess.Square) bool {
+	for _, mv := range m.chess.ValidMoves() {
+		if mv.S1() == from && mv.S2() == to && mv.Promo() != chess.NoPieceType {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *GameModel) promoSAN(key string) string {
+	promoMap := map[string]chess.PieceType{
+		"q": chess.Queen,
+		"r": chess.Rook,
+		"b": chess.Bishop,
+		"n": chess.Knight,
+	}
+	promo, ok := promoMap[key]
+	if !ok {
+		return ""
+	}
+	pos := m.chess.Position()
+	for _, mv := range m.chess.ValidMoves() {
+		if mv.S1() == m.pendingPromoFrom && mv.S2() == m.pendingPromoTo && mv.Promo() == promo {
+			return chess.AlgebraicNotation{}.Encode(pos, mv)
+		}
+	}
+	return ""
+}
+
+// handlePromoClick handles a mouse click on the promotion popup.
+// Returns a tea.Cmd if a piece was selected, nil otherwise.
+func (m *GameModel) handlePromoClick(x, y int) tea.Cmd {
+	cols := m.board.CellCols()
+	rows := m.board.CellRows()
+	// Piece cells start 2 lines after promoPopupY:
+	// +1 for the turn-status line, +1 for the "Promote pawn:" header.
+	pieceY := m.promoPopupY + 2
+	if y < pieceY || y >= pieceY+rows {
+		return nil
+	}
+	if x < 2 || x >= 2+4*cols {
+		return nil
+	}
+	pieceIdx := (x - 2) / cols
+	keys := []string{"q", "r", "b", "n"}
+	if pieceIdx < 0 || pieceIdx >= len(keys) {
+		return nil
+	}
+	san := m.promoSAN(keys[pieceIdx])
+	m.pendingPromo = false
+	if san != "" {
+		return m.sendMoveStr(san)
+	}
+	return nil
 }
 
 func (m *GameModel) sendUndo() tea.Cmd {
@@ -303,6 +413,43 @@ func (m *GameModel) sendUndoResponse(accept bool) tea.Cmd {
 	}
 }
 
+func (m *GameModel) promoPopupView() string {
+	var sb strings.Builder
+	myColor := m.chess.Position().Turn()
+	type promoOpt struct {
+		pt  chess.PieceType
+		key string
+	}
+	opts := []promoOpt{
+		{chess.Queen, "q"},
+		{chess.Rook, "r"},
+		{chess.Bishop, "b"},
+		{chess.Knight, "n"},
+	}
+	bgs := []string{"#F0D9B5", "#B58863", "#F0D9B5", "#B58863"}
+	cols := m.board.CellCols()
+	rows := m.board.CellRows()
+	sb.WriteString(gameStatusStyle.Render("Promote pawn:") + "\n")
+	for line := 0; line < rows; line++ {
+		sb.WriteString("  ")
+		for i, opt := range opts {
+			p := chess.NewPiece(opt.pt, myColor)
+			lines := render.RenderCell(p, bgs[i], cols, rows)
+			sb.WriteString(lines[line])
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("  ")
+	for _, opt := range opts {
+		leftPad := (cols - 1) / 2
+		rightPad := cols - 1 - leftPad
+		label := strings.Repeat(" ", leftPad) + opt.key + strings.Repeat(" ", rightPad)
+		sb.WriteString(gameHelpStyle.Render(label))
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
 // View implements tea.Model.
 func (m *GameModel) View() string {
 	var sb strings.Builder
@@ -312,6 +459,8 @@ func (m *GameModel) View() string {
 	right := lipgloss.NewStyle().Bold(true).Render("Moves") + "\n" + moveView
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right))
 	sb.WriteString("\n")
+	// promoPopupY: board (8*cellRows+1 lines) + this newline = 8*cellRows+2
+	m.promoPopupY = m.board.CellRows()*8 + 2
 	if m.myColor == chess.NoColor {
 		sb.WriteString(gameStatusStyle.Render("Spectating"))
 		sb.WriteString("\n")
@@ -325,8 +474,12 @@ func (m *GameModel) View() string {
 		}
 		sb.WriteString(gameStatusStyle.Render(turnText))
 		sb.WriteString("\n")
-		sb.WriteString(m.moveInput.View())
-		sb.WriteString("\n")
+		if m.pendingPromo {
+			sb.WriteString(m.promoPopupView())
+		} else {
+			sb.WriteString(m.moveInput.View())
+			sb.WriteString("\n")
+		}
 	}
 	if m.statusMsg != "" {
 		sb.WriteString(gameStatusStyle.Render(m.statusMsg))
@@ -343,11 +496,11 @@ func (m *GameModel) View() string {
 	var help string
 	switch {
 	case m.myColor == chess.NoColor:
-		help = "esc:back to lobby"
+		help = "ctrl+e:export  esc:back to lobby"
 	case m.gameOver:
-		help = "esc:back to lobby"
+		help = "ctrl+e:export  esc:back to lobby"
 	default:
-		help = "enter/click:move  u:undo  ctrl+r:resign  esc:lobby"
+		help = "enter/click:move  u:undo  ctrl+r:resign  ctrl+e:export  [/]:resize  esc:lobby"
 	}
 	sb.WriteString(gameHelpStyle.Render(help))
 	sb.WriteString("\n")
