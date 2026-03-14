@@ -82,12 +82,38 @@ func composeBoard(b *Board) *image.RGBA {
 	return img
 }
 
+const kittyChunkSize = 4096
+
+// buildKittyUpload writes Kitty APC sequences to w that upload img as image id.
+// Uses raw RGBA format (f=32) with unicode placeholder mode (U=1).
+func buildKittyUpload(img *image.RGBA, id uint8, w io.Writer) {
+	b := img.Bounds()
+	width, height := b.Dx(), b.Dy()
+	payload := base64.StdEncoding.EncodeToString(img.Pix)
+	total := len(payload)
+	for i := 0; i < total; i += kittyChunkSize {
+		end := i + kittyChunkSize
+		if end > total {
+			end = total
+		}
+		chunk := payload[i:end]
+		final := end == total
+		moreFlag := "1"
+		if final {
+			moreFlag = "0"
+		}
+		if i == 0 {
+			fmt.Fprintf(w, "\033_Ga=T,q=2,f=32,s=%d,v=%d,U=1,i=%d,m=%s;%s\033\\",
+				width, height, id, moreFlag, chunk)
+		} else {
+			fmt.Fprintf(w, "\033_Gm=%s;%s\033\\", moreFlag, chunk)
+		}
+	}
+}
+
 // Silence unused import errors until later tasks add the functions.
 var (
-	_ = base64.StdEncoding
-	_ = fmt.Sprintf
 	_ color.RGBA
-	_ io.Writer
 	_ strings.Builder
 	_ sync.Mutex
 	_ lipgloss.Style

@@ -1,6 +1,9 @@
 package render
 
 import (
+	"bytes"
+	"image"
+	"strings"
 	"testing"
 
 	"github.com/notnil/chess"
@@ -60,5 +63,45 @@ func TestComposeBoard_Flipped(t *testing.T) {
 	img := composeBoard(b)
 	if img.Bounds().Dx() != 480 || img.Bounds().Dy() != 480 {
 		t.Errorf("expected 480x480, got %dx%d", img.Bounds().Dx(), img.Bounds().Dy())
+	}
+}
+
+func TestBuildKittyUpload_Format(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	var buf bytes.Buffer
+	buildKittyUpload(img, 1, &buf)
+	out := buf.String()
+
+	checks := []string{"a=T", "f=32", "U=1", "i=1", "s=4", "v=4", "m=0"}
+	for _, c := range checks {
+		if !strings.Contains(out, c) {
+			t.Errorf("missing %q in upload sequence: %q", c, out[:min(len(out), 80)])
+		}
+	}
+	if !strings.HasPrefix(out, "\033_G") {
+		t.Errorf("expected APC start \\033_G, got: %q", out[:min(len(out), 10)])
+	}
+	if !strings.HasSuffix(out, "\033\\") {
+		t.Errorf("expected APC end \\033\\\\, got: %q", out[max(0, len(out)-5):])
+	}
+}
+
+func TestBuildKittyUpload_Chunking(t *testing.T) {
+	// 120x120 image → 120*120*4=57600 bytes → base64 ~76800 chars → ~19 chunks
+	img := image.NewRGBA(image.Rect(0, 0, 120, 120))
+	var buf bytes.Buffer
+	buildKittyUpload(img, 2, &buf)
+	out := buf.String()
+	// First chunk must have m=1 (more data follows)
+	firstEnd := strings.Index(out, "\033\\")
+	firstChunk := out[:firstEnd]
+	if !strings.Contains(firstChunk, "m=1") {
+		t.Errorf("first chunk should have m=1: %q", firstChunk[:min(len(firstChunk), 80)])
+	}
+	// Last chunk must have m=0
+	lastStart := strings.LastIndex(out, "\033_G")
+	lastChunk := out[lastStart:]
+	if !strings.Contains(lastChunk, "m=0") {
+		t.Errorf("last chunk should have m=0: %q", lastChunk[:min(len(lastChunk), 80)])
 	}
 }
