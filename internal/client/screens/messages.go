@@ -15,6 +15,8 @@ const (
 	ScreenHistory
 	ScreenReplay
 	ScreenLeaderboard
+	ScreenImport
+	ScreenImportedGames
 )
 
 // ConnectedMsg is sent when WebSocket connection is established.
