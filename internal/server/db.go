@@ -47,6 +47,7 @@ type HistoryRecord struct {
 	BlackEloAfter  int       `json:"black_elo_after"`
 	PGN            string    `json:"pgn,omitempty"`
 	PlayedAt       time.Time `json:"played_at"`
+	Imported       bool      `json:"imported"`
 }
 
 // NewDB connects to Postgres using connStr, applies the migration at migrationSQL, and returns a DB.
@@ -128,7 +129,7 @@ func (d *DB) SaveGameAndUpdateElo(ctx context.Context, g GameRecord, whiteElo, b
 // GetGameHistory returns the 100 most recent games where username is white or black, ordered by played_at DESC.
 func (d *DB) GetGameHistory(ctx context.Context, username string) ([]HistoryRecord, error) {
 	rows, err := d.pool.Query(ctx,
-		`SELECT id, white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn, played_at
+		`SELECT id, white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn, played_at, imported
 		 FROM games
 		 WHERE white = $1 OR black = $1
 		 ORDER BY played_at DESC
@@ -142,7 +143,7 @@ func (d *DB) GetGameHistory(ctx context.Context, username string) ([]HistoryReco
 	var records []HistoryRecord
 	for rows.Next() {
 		var r HistoryRecord
-		if err := rows.Scan(&r.ID, &r.White, &r.Black, &r.Result, &r.WhiteEloBefore, &r.BlackEloBefore, &r.WhiteEloAfter, &r.BlackEloAfter, &r.PGN, &r.PlayedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.White, &r.Black, &r.Result, &r.WhiteEloBefore, &r.BlackEloBefore, &r.WhiteEloAfter, &r.BlackEloAfter, &r.PGN, &r.PlayedAt, &r.Imported); err != nil {
 			return nil, err
 		}
 		records = append(records, r)
@@ -168,4 +169,60 @@ func (d *DB) GetLeaderboard(ctx context.Context) ([]User, error) {
 		users = append(users, u)
 	}
 	return users, rows.Err()
+}
+
+// CheckUsername checks whether a user exists by username. Returns false, nil if not found.
+func (d *DB) CheckUsername(ctx context.Context, username string) (bool, error) {
+	u, err := d.GetUser(ctx, username)
+	if err != nil {
+		return false, err
+	}
+	return u != nil, nil
+}
+
+// SaveImportedGame inserts a game marked as imported. Creates missing users if forceCreate is true.
+func (d *DB) SaveImportedGame(ctx context.Context, white, black, pgn string, forceCreate bool) error {
+	if forceCreate {
+		for _, name := range []string{white, black} {
+			exists, err := d.CheckUsername(ctx, name)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				if err := d.CreateUser(ctx, name); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	_, err := d.pool.Exec(ctx,
+		`INSERT INTO games (white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn, imported)
+		 VALUES ($1, $2, 'imported', 0, 0, 0, 0, $3, true)`,
+		white, black, pgn,
+	)
+	return err
+}
+
+// GetImportedGames returns the 100 most recent imported games, ordered by played_at DESC.
+func (d *DB) GetImportedGames(ctx context.Context) ([]HistoryRecord, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT id, white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn, played_at, imported
+		 FROM games
+		 WHERE imported = true
+		 ORDER BY played_at DESC
+		 LIMIT 100`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []HistoryRecord
+	for rows.Next() {
+		var r HistoryRecord
+		if err := rows.Scan(&r.ID, &r.White, &r.Black, &r.Result, &r.WhiteEloBefore, &r.BlackEloBefore, &r.WhiteEloAfter, &r.BlackEloAfter, &r.PGN, &r.PlayedAt, &r.Imported); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
 }
