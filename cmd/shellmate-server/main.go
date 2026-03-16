@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,7 +29,7 @@ func main() {
 	if listenAddr == "" {
 		listenAddr = ":8080"
 	}
-	migrationSQL, err := readMigration()
+	migrationSQL, err := readMigrations()
 	if err != nil {
 		slog.Error("failed to read migration file", "error", err)
 		os.Exit(1)
@@ -70,16 +71,29 @@ func main() {
 	}
 }
 
-func readMigration() (string, error) {
+func readMigrations() (string, error) {
+	files := []string{"001_init.sql", "002_imported.sql"}
+	var combined strings.Builder
+	for _, f := range files {
+		data, err := readMigrationFile(f)
+		if err != nil {
+			return "", err
+		}
+		combined.WriteString(data)
+		combined.WriteString("\n")
+	}
+	return combined.String(), nil
+}
+
+func readMigrationFile(name string) (string, error) {
 	execPath, err := os.Executable()
 	if err == nil {
-		p := filepath.Join(filepath.Dir(execPath), "migrations", "001_init.sql")
-		data, err := os.ReadFile(p)
-		if err == nil {
+		p := filepath.Join(filepath.Dir(execPath), "migrations", name)
+		if data, err := os.ReadFile(p); err == nil {
 			return string(data), nil
 		}
 	}
-	data, err := os.ReadFile("./migrations/001_init.sql")
+	data, err := os.ReadFile(filepath.Join("./migrations", name))
 	if err != nil {
 		return "", err
 	}
