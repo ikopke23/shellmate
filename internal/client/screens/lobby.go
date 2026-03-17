@@ -10,6 +10,17 @@ import (
 	"github.com/ikopke/shellmate/internal/shared"
 )
 
+var lobbyKeybinds = []string{
+	"n:new",
+	"enter:join",
+	"s:spectate",
+	"h:history",
+	"i:import",
+	"m:imported",
+	"l:leaderboard",
+	"q:quit",
+}
+
 var (
 	lobbyTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).Padding(0, 1)
 	lobbyCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
@@ -174,7 +185,7 @@ func (m *LobbyModel) View() string {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
 		sb.WriteString("\n")
 	}
-	sb.WriteString(lobbyHelpStyle.Render("n:new  enter:join  s:spectate  h:history  i:import  m:imported  l:leaderboard  q:quit"))
+	sb.WriteString(lobbyHelpStyle.Render(strings.Join(lobbyKeybinds, "  ")))
 	sb.WriteString("\n")
 	return sb.String()
 }
