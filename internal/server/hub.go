@@ -69,6 +69,18 @@ func (h *Hub) GetGameHistory(ctx context.Context, username string) ([]HistoryRec
 	return h.db.GetGameHistory(ctx, username)
 }
 
+func (h *Hub) CheckUsername(ctx context.Context, username string) (bool, error) {
+	return h.db.CheckUsername(ctx, username)
+}
+
+func (h *Hub) SaveImportedGame(ctx context.Context, white, black, pgn string, forceCreate bool) error {
+	return h.db.SaveImportedGame(ctx, white, black, pgn, forceCreate)
+}
+
+func (h *Hub) GetImportedGames(ctx context.Context) ([]HistoryRecord, error) {
+	return h.db.GetImportedGames(ctx)
+}
+
 // Register adds a new authenticated client to the hub.
 // If there is already a connection for this username, the old connection is closed.
 func (h *Hub) Register(username string, conn *websocket.Conn) *Client {

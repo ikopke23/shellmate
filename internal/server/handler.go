@@ -8,6 +8,17 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type saveImportedRequest struct {
+	White       string `json:"white"`
+	Black       string `json:"black"`
+	PGN         string `json:"pgn"`
+	ForceCreate bool   `json:"force_create"`
+}
+
+type checkUsernameResponse struct {
+	Exists bool `json:"exists"`
+}
+
 // Handler holds the hub and upgrader for HTTP/WS handling.
 type Handler struct {
 	hub      *Hub
@@ -66,6 +77,60 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		records, err := h.hub.GetGameHistory(r.Context(), username)
 		if err != nil {
 			slog.Error("failed to get game history", "error", err, "username", username)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		if records == nil {
+			records = []HistoryRecord{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(records)
+	case "/check-username":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := r.URL.Query().Get("name")
+		if name == "" {
+			http.Error(w, "name parameter required", http.StatusBadRequest)
+			return
+		}
+		exists, err := h.hub.CheckUsername(r.Context(), name)
+		if err != nil {
+			slog.Error("failed to check username", "error", err, "name", name)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(checkUsernameResponse{Exists: exists})
+	case "/save-imported":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req saveImportedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.White == "" || req.Black == "" || req.PGN == "" {
+			http.Error(w, "white, black, and pgn are required", http.StatusBadRequest)
+			return
+		}
+		if err := h.hub.SaveImportedGame(r.Context(), req.White, req.Black, req.PGN, req.ForceCreate); err != nil {
+			slog.Error("failed to save imported game", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case "/imported-games":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		records, err := h.hub.GetImportedGames(r.Context())
+		if err != nil {
+			slog.Error("failed to get imported games", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
