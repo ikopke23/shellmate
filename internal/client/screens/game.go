@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gorilla/websocket"
@@ -28,7 +27,7 @@ type GameModel struct {
 	moveList          *render.MoveList
 	chess             *chess.Game
 	myColor           chess.Color
-	moveInput         textinput.Model
+	input             *LocalMoveInput
 	statusMsg         string
 	conn              *websocket.Conn
 	username          string
@@ -38,34 +37,23 @@ type GameModel struct {
 	pendingUndo       bool
 	pendingUndoPrompt bool
 	err               string
-	selectedSq        chess.Square
-	hasSelected       bool
-	pendingPromo      bool
-	pendingPromoFrom  chess.Square
-	pendingPromoTo    chess.Square
-	promoPopupY       int
 }
 
 // NewGameModel creates a new game screen.
 func NewGameModel(gameID, white, black string, myColor chess.Color, conn *websocket.Conn, username string) *GameModel {
 	g := chess.NewGame()
 	flipped := myColor == chess.Black
-	mi := textinput.New()
-	mi.Placeholder = "Type move (e.g. e4)"
-	mi.Focus()
-	mi.CharLimit = 10
-	mi.Width = 20
 	return &GameModel{
-		gameID:    gameID,
-		white:     white,
-		black:     black,
-		board:     render.NewBoard(g.Position(), flipped),
-		moveList:  render.NewMoveList(20),
-		chess:     g,
-		myColor:   myColor,
-		moveInput: mi,
-		conn:      conn,
-		username:  username,
+		gameID:   gameID,
+		white:    white,
+		black:    black,
+		board:    render.NewBoard(g.Position(), flipped),
+		moveList: render.NewMoveList(20),
+		chess:    g,
+		myColor:  myColor,
+		input:    NewLocalMoveInput(myColor == chess.Black),
+		conn:     conn,
+		username: username,
 	}
 }
 
@@ -129,7 +117,7 @@ func (m *GameModel) ClearPendingUndo() {
 
 // Init implements tea.Model.
 func (m *GameModel) Init() tea.Cmd {
-	return textinput.Blink
+	return m.input.Init()
 }
 
 // Update implements tea.Model.
@@ -137,62 +125,25 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			if m.pendingPromo {
-				if cmd := m.handlePromoClick(msg.X, msg.Y); cmd != nil {
-					return m, cmd
-				}
-				return m, nil
-			}
 			if m.myColor != chess.NoColor && !m.gameOver && m.chess.Position().Turn() == m.myColor {
-				sq, ok := m.squareFromMouse(msg.X, msg.Y)
-				if ok {
-					pos := m.chess.Position()
-					board := pos.Board()
-					piece := board.Piece(sq)
-					if !m.hasSelected {
-						if piece != chess.NoPiece && piece.Color() == m.myColor {
-							m.selectedSq = sq
-							m.hasSelected = true
-							m.board.SetSelected(sq)
-						}
-					} else if sq == m.selectedSq {
-						m.hasSelected = false
-						m.board.ClearSelected()
-					} else if piece != chess.NoPiece && piece.Color() == m.myColor {
-						m.selectedSq = sq
-						m.board.SetSelected(sq)
-					} else {
-						from := m.selectedSq
-						m.hasSelected = false
-						m.board.ClearSelected()
-						if m.isPromotionMove(from, sq) {
-							m.pendingPromo = true
-							m.pendingPromoFrom = from
-							m.pendingPromoTo = sq
-						} else {
-							san := m.mouseToSAN(from, sq)
-							if san != "" {
-								return m, m.sendMoveStr(san)
-							}
-						}
-					}
+				san, handled, cmd := m.input.HandleMsg(msg, m.board, m.chess)
+				if san != "" {
+					return m, tea.Batch(cmd, m.sendMoveStr(san))
+				}
+				if handled {
+					return m, cmd
 				}
 			}
 		}
 		return m, nil
 	case tea.KeyMsg:
-		if m.pendingPromo {
-			switch msg.String() {
-			case "q", "r", "b", "n":
-				san := m.promoSAN(msg.String())
-				m.pendingPromo = false
-				if san != "" {
-					return m, m.sendMoveStr(san)
-				}
-			case "esc":
-				m.pendingPromo = false
-			}
-			return m, nil
+		// Always delegate to LocalMoveInput first — it handles enter, q/r/b/n promo keys, esc-promo.
+		san, handled, inputCmd := m.input.HandleMsg(msg, m.board, m.chess)
+		if san != "" {
+			return m, tea.Batch(inputCmd, m.sendMoveStr(san))
+		}
+		if handled {
+			return m, inputCmd
 		}
 		if m.pendingUndoPrompt {
 			switch msg.String() {
@@ -210,11 +161,6 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "esc", "q":
 			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
-		case "enter":
-			if m.myColor == chess.NoColor {
-				return m, nil
-			}
-			return m, m.sendMove()
 		case "u":
 			if m.myColor == chess.NoColor || len(m.moves) == 0 || m.pendingUndo {
 				return m, nil
@@ -248,18 +194,7 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err.Error()
 		return m, nil
 	}
-	var cmd tea.Cmd
-	m.moveInput, cmd = m.moveInput.Update(msg)
-	return m, cmd
-}
-
-func (m *GameModel) sendMove() tea.Cmd {
-	san := strings.TrimSpace(m.moveInput.Value())
-	if san == "" {
-		return nil
-	}
-	m.moveInput.SetValue("")
-	return m.sendMoveStr(san)
+	return m, nil
 }
 
 func (m *GameModel) sendMoveStr(san string) tea.Cmd {
@@ -273,105 +208,6 @@ func (m *GameModel) sendMoveStr(san string) tea.Cmd {
 		}
 		return nil
 	}
-}
-
-func (m *GameModel) squareFromMouse(x, y int) (chess.Square, bool) {
-	cellCols := m.board.CellCols()
-	cellRows := m.board.CellRows()
-	if x < 2 || x > 2+8*cellCols-1 || y < 0 || y > 8*cellRows-1 {
-		return 0, false
-	}
-	cellCol := (x - 2) / cellCols
-	cellRow := y / cellRows
-	if cellCol < 0 || cellCol > 7 {
-		return 0, false
-	}
-	var rankIdx, fileIdx int
-	if m.board.Flipped() {
-		rankIdx = cellRow
-		fileIdx = 7 - cellCol
-	} else {
-		rankIdx = 7 - cellRow
-		fileIdx = cellCol
-	}
-	return chess.Square(rankIdx*8 + fileIdx), true
-}
-
-func (m *GameModel) mouseToSAN(from, to chess.Square) string {
-	pos := m.chess.Position()
-	var bestMove *chess.Move
-	for _, mv := range m.chess.ValidMoves() {
-		if mv.S1() == from && mv.S2() == to {
-			if mv.Promo() == chess.Queen {
-				bestMove = mv
-				break
-			}
-			if bestMove == nil {
-				bestMove = mv
-			}
-		}
-	}
-	if bestMove == nil {
-		return ""
-	}
-	san := chess.AlgebraicNotation{}.Encode(pos, bestMove)
-	return san
-}
-
-func (m *GameModel) isPromotionMove(from, to chess.Square) bool {
-	for _, mv := range m.chess.ValidMoves() {
-		if mv.S1() == from && mv.S2() == to && mv.Promo() != chess.NoPieceType {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *GameModel) promoSAN(key string) string {
-	promoMap := map[string]chess.PieceType{
-		"q": chess.Queen,
-		"r": chess.Rook,
-		"b": chess.Bishop,
-		"n": chess.Knight,
-	}
-	promo, ok := promoMap[key]
-	if !ok {
-		return ""
-	}
-	pos := m.chess.Position()
-	for _, mv := range m.chess.ValidMoves() {
-		if mv.S1() == m.pendingPromoFrom && mv.S2() == m.pendingPromoTo && mv.Promo() == promo {
-			return chess.AlgebraicNotation{}.Encode(pos, mv)
-		}
-	}
-	return ""
-}
-
-// handlePromoClick handles a mouse click on the promotion popup.
-// Returns a tea.Cmd if a piece was selected, nil otherwise.
-func (m *GameModel) handlePromoClick(x, y int) tea.Cmd {
-	cols := m.board.CellCols()
-	rows := m.board.CellRows()
-	// Piece cells start 2 lines after promoPopupY:
-	// +1 for the turn-status line, +1 for the "Promote pawn:" header.
-	pieceY := m.promoPopupY + 2
-	if y < pieceY || y >= pieceY+rows {
-		return nil
-	}
-	if x < 2 || x >= 2+4*cols {
-		return nil
-	}
-	pieceIdx := (x - 2) / cols
-	keys := []string{"q", "r", "b", "n"}
-	if pieceIdx < 0 || pieceIdx >= len(keys) {
-		return nil
-	}
-	san := m.promoSAN(keys[pieceIdx])
-	m.pendingPromo = false
-	if san != "" {
-		return m.sendMoveStr(san)
-	}
-	return nil
 }
 
 func (m *GameModel) sendUndo() tea.Cmd {
@@ -413,43 +249,6 @@ func (m *GameModel) sendUndoResponse(accept bool) tea.Cmd {
 	}
 }
 
-func (m *GameModel) promoPopupView() string {
-	var sb strings.Builder
-	myColor := m.chess.Position().Turn()
-	type promoOpt struct {
-		pt  chess.PieceType
-		key string
-	}
-	opts := []promoOpt{
-		{chess.Queen, "q"},
-		{chess.Rook, "r"},
-		{chess.Bishop, "b"},
-		{chess.Knight, "n"},
-	}
-	bgs := []string{"#F0D9B5", "#B58863", "#F0D9B5", "#B58863"}
-	cols := m.board.CellCols()
-	rows := m.board.CellRows()
-	sb.WriteString(gameStatusStyle.Render("Promote pawn:") + "\n")
-	for line := 0; line < rows; line++ {
-		sb.WriteString("  ")
-		for i, opt := range opts {
-			p := chess.NewPiece(opt.pt, myColor)
-			lines := render.RenderCell(p, bgs[i], cols, rows)
-			sb.WriteString(lines[line])
-		}
-		sb.WriteString("\n")
-	}
-	sb.WriteString("  ")
-	for _, opt := range opts {
-		leftPad := (cols - 1) / 2
-		rightPad := cols - 1 - leftPad
-		label := strings.Repeat(" ", leftPad) + opt.key + strings.Repeat(" ", rightPad)
-		sb.WriteString(gameHelpStyle.Render(label))
-	}
-	sb.WriteString("\n")
-	return sb.String()
-}
-
 // View implements tea.Model.
 func (m *GameModel) View() string {
 	var sb strings.Builder
@@ -459,8 +258,6 @@ func (m *GameModel) View() string {
 	right := lipgloss.NewStyle().Bold(true).Render("Moves") + "\n" + moveView
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right))
 	sb.WriteString("\n")
-	// promoPopupY: board (8*cellRows+1 lines) + this newline = 8*cellRows+2
-	m.promoPopupY = m.board.CellRows()*8 + 2
 	if m.myColor == chess.NoColor {
 		sb.WriteString(gameStatusStyle.Render("Spectating"))
 		sb.WriteString("\n")
@@ -474,12 +271,9 @@ func (m *GameModel) View() string {
 		}
 		sb.WriteString(gameStatusStyle.Render(turnText))
 		sb.WriteString("\n")
-		if m.pendingPromo {
-			sb.WriteString(m.promoPopupView())
-		} else {
-			sb.WriteString(m.moveInput.View())
-			sb.WriteString("\n")
-		}
+		inputY := m.board.CellRows()*8 + 2
+		m.input.SetPromoPopupY(inputY)
+		sb.WriteString(m.input.View(m.board, m.chess))
 	}
 	if m.statusMsg != "" {
 		sb.WriteString(gameStatusStyle.Render(m.statusMsg))
