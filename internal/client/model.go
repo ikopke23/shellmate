@@ -13,22 +13,24 @@ import (
 
 type historyLoadedMsg struct{ records []shared.HistoryRecord }
 type leaderboardLoadedMsg struct{ players []shared.PlayerInfo }
+type importedGamesLoadedMsg struct{ records []shared.HistoryRecord }
 
 // Model is the root bubbletea model.
 type Model struct {
-	screen       screens.ScreenID
-	conn         *websocket.Conn
-	username     string
-	serverAddr   string
-	login        *screens.LoginModel
-	lobby        *screens.LobbyModel
-	game         *screens.GameModel
-	history      *screens.HistoryModel
-	replay       *screens.ReplayModel
-	leaderboard  *screens.LeaderboardModel
-	importScreen *screens.ImportModel
-	width        int
-	height       int
+	screen        screens.ScreenID
+	conn          *websocket.Conn
+	username      string
+	serverAddr    string
+	login         *screens.LoginModel
+	lobby         *screens.LobbyModel
+	game          *screens.GameModel
+	history       *screens.HistoryModel
+	replay        *screens.ReplayModel
+	leaderboard   *screens.LeaderboardModel
+	importScreen  *screens.ImportModel
+	importedGames *screens.ImportedGamesModel
+	width         int
+	height        int
 }
 
 // NewModel creates the root model starting at the login screen.
@@ -82,6 +84,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.leaderboard.SetPlayers(msg.players)
 		}
 		return m, nil
+	case importedGamesLoadedMsg:
+		if m.importedGames != nil {
+			m.importedGames.SetGames(msg.records)
+		}
+		return m, nil
 	case screens.ErrMsg:
 		// pass through to active screen
 	}
@@ -132,6 +139,12 @@ func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.importScreen = im
 		}
 		return m, cmd
+	case screens.ScreenImportedGames:
+		updated, cmd := m.importedGames.Update(msg)
+		if ig, ok := updated.(*screens.ImportedGamesModel); ok {
+			m.importedGames = ig
+		}
+		return m, cmd
 	}
 	return m, nil
 }
@@ -150,6 +163,10 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 	case screens.ScreenImport:
 		m.importScreen = screens.NewImportModel()
 		m.screen = screens.ScreenImport
+	case screens.ScreenImportedGames:
+		m.importedGames = screens.NewImportedGamesModel()
+		m.screen = screens.ScreenImportedGames
+		return m, m.fetchImportedGames()
 	case screens.ScreenReplay:
 		m.replay = screens.NewReplayModel()
 		m.replay.SetServerAddr(m.serverAddr)
@@ -164,6 +181,12 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 			if d.Record.PGN != "" {
 				_ = m.replay.LoadPGN(d.Record.PGN)
 				m.replay.SetBackScreen(screens.ScreenImport)
+			}
+		case screens.ImportedGamesOpenData:
+			if d.Record.PGN != "" {
+				_ = m.replay.LoadPGN(d.Record.PGN)
+				m.replay.SetMeta(d.Record.White, d.Record.Black, d.Record.PlayedAt)
+				m.replay.SetBackScreen(screens.ScreenImportedGames)
 			}
 		}
 		m.screen = screens.ScreenReplay
@@ -283,6 +306,10 @@ func (m Model) View() string {
 		if m.importScreen != nil {
 			return m.importScreen.View()
 		}
+	case screens.ScreenImportedGames:
+		if m.importedGames != nil {
+			return m.importedGames.View()
+		}
 	}
 	return ""
 }
@@ -304,6 +331,21 @@ func (m *Model) fetchHistory() tea.Cmd {
 			return screens.ErrMsg{Err: err}
 		}
 		return historyLoadedMsg{records: records}
+	}
+}
+
+func (m *Model) fetchImportedGames() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := http.Get("http://" + m.serverAddr + "/imported-games")
+		if err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		defer resp.Body.Close()
+		var records []shared.HistoryRecord
+		if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		return importedGamesLoadedMsg{records: records}
 	}
 }
 
