@@ -19,27 +19,36 @@ var (
 
 // ReplayModel provides step-through replay of a past game.
 type ReplayModel struct {
-	pgn       string
-	white     string
-	black     string
-	playedAt  time.Time
-	game      *chess.Game
-	moves     []*chess.Move
-	positions []*chess.Position
-	sanMoves  []string
-	stepIdx   int // current step (0 = start, len(moves) = end)
-	board     *render.Board
-	moveList  *render.MoveList
-	exportMsg string
-	err       string
+	pgn        string
+	white      string
+	black      string
+	playedAt   time.Time
+	game       *chess.Game
+	moves      []*chess.Move
+	positions  []*chess.Position
+	sanMoves   []string
+	stepIdx    int // current step (0 = start, len(moves) = end)
+	board      *render.Board
+	moveList   *render.MoveList
+	exportMsg  string
+	err        string
+	backScreen ScreenID
+	moveListX  int // X start of move list on screen, computed in View()
+	moveListY  int // Y of first move row, computed in View()
 }
 
 // NewReplayModel creates an empty replay screen.
 func NewReplayModel() *ReplayModel {
 	return &ReplayModel{
-		board:    render.NewBoard(chess.NewGame().Position(), false),
-		moveList: render.NewMoveList(20),
+		board:      render.NewBoard(chess.NewGame().Position(), false),
+		moveList:   render.NewMoveList(20),
+		backScreen: ScreenHistory,
 	}
+}
+
+// SetBackScreen sets the screen to return to when the user exits replay.
+func (m *ReplayModel) SetBackScreen(s ScreenID) {
+	m.backScreen = s
 }
 
 // LoadPGN parses a PGN string and sets up the replay.
@@ -94,10 +103,23 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ErrMsg:
 		m.err = msg.Err.Error()
 		return m, nil
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			relY := msg.Y - m.moveListY
+			if relY >= 0 && msg.X >= m.moveListX {
+				leftSide := msg.X < m.moveListX+11
+				idx := m.moveList.ClickMoveIdx(relY, leftSide)
+				if idx >= 0 && idx < len(m.moves) {
+					m.stepIdx = idx + 1
+					m.updateView()
+				}
+			}
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenHistory} }
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: m.backScreen} }
 		case "ctrl+c":
 			return m, tea.Quit
 		case "left", "h":
@@ -133,6 +155,11 @@ func (m *ReplayModel) View() string {
 	right := lipgloss.NewStyle().Bold(true).Render("Moves") + "\n" + moveView
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right))
 	sb.WriteString("\n")
+	// Board: 2 left-pad cols + 8*cellCols board cols; "  " 2-col separator; then move list.
+	// Title on line 0, blank on line 1, JoinHorizontal starts at line 2.
+	// "Moves" header is the first line of the right side (line 2), move rows start at line 3.
+	m.moveListX = 2 + 8*m.board.CellCols() + 2
+	m.moveListY = 3
 	sb.WriteString(replayStepStyle.Render(
 		strings.Repeat(" ", 3) + stepInfo(m.stepIdx, len(m.moves)),
 	))

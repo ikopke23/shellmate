@@ -7,7 +7,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var highlightMoveStyle = lipgloss.NewStyle().Background(lipgloss.Color("#3C3C3C"))
+var (
+	highlightMoveStyle = lipgloss.NewStyle().Background(lipgloss.Color("#3C3C3C"))
+	dimMoveStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+)
 
 // MoveList renders the move history for a chess game as a scrollable panel.
 // Moves are displayed in pairs: "1. e4   e5", "2. Nf3  Nc6", etc.
@@ -18,6 +21,7 @@ type MoveList struct {
 	currentIdx   int      // index of the current move (0-based), -1 = none
 	height       int      // visible height in lines
 	scrollOffset int      // first visible row index
+	branchPoint  int      // first move index that is a branch move; -1 = no branch
 }
 
 // NewMoveList creates an empty move list with the given visible height.
@@ -26,9 +30,40 @@ func NewMoveList(height int) *MoveList {
 		height = 1
 	}
 	return &MoveList{
-		height:     height,
-		currentIdx: -1,
+		height:      height,
+		currentIdx:  -1,
+		branchPoint: -1,
 	}
+}
+
+// SetBranchPoint marks the first branch move index. Moves before it render dimmed.
+// Pass -1 to clear branch mode styling.
+func (m *MoveList) SetBranchPoint(idx int) {
+	m.branchPoint = idx
+}
+
+// ClickMoveIdx converts a visible row click to a 0-based move index.
+// row is 0-based relative to the visible area (i.e. after scrollOffset).
+// leftSide true = white move column; false = black move column.
+// Returns -1 if the row or column is out of range.
+func (m *MoveList) ClickMoveIdx(row int, leftSide bool) int {
+	realRow := m.scrollOffset + row
+	totalRows := (len(m.moves) + 1) / 2
+	if realRow < 0 || realRow >= totalRows {
+		return -1
+	}
+	if leftSide {
+		idx := realRow * 2
+		if idx >= len(m.moves) {
+			return -1
+		}
+		return idx
+	}
+	idx := realRow*2 + 1
+	if idx >= len(m.moves) {
+		return -1
+	}
+	return idx
 }
 
 // SetMoves replaces the full move list and sets the current move index.
@@ -71,17 +106,18 @@ func (m *MoveList) View() string {
 		numStr := fmt.Sprintf("%-3s ", fmt.Sprintf("%d.", moveNum))
 		whiteStr := fmt.Sprintf("%-7s", white)
 		blackStr := fmt.Sprintf(" %-7s", black)
+		renderMove := func(idx int, s string) string {
+			if m.branchPoint >= 0 && idx < m.branchPoint {
+				return dimMoveStyle.Render(s)
+			}
+			if m.currentIdx == idx {
+				return highlightMoveStyle.Render(s)
+			}
+			return s
+		}
 		sb.WriteString(numStr)
-		if m.currentIdx == whiteIdx {
-			sb.WriteString(highlightMoveStyle.Render(whiteStr))
-		} else {
-			sb.WriteString(whiteStr)
-		}
-		if m.currentIdx == whiteIdx+1 {
-			sb.WriteString(highlightMoveStyle.Render(blackStr))
-		} else {
-			sb.WriteString(blackStr)
-		}
+		sb.WriteString(renderMove(whiteIdx, whiteStr))
+		sb.WriteString(renderMove(whiteIdx+1, blackStr))
 		sb.WriteString("\n")
 		rendered++
 	}

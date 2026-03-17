@@ -100,6 +100,34 @@ func TestMoveListCurrentIdxNone(t *testing.T) {
 	}
 }
 
+func TestMoveListClickMoveIdx(t *testing.T) {
+	ml := NewMoveList(10)
+	ml.SetMoves([]string{"e4", "e5", "Nf3", "Nc6"}, 3)
+	if got := ml.ClickMoveIdx(0, true); got != 0 {
+		t.Errorf("row 0 left: want 0, got %d", got)
+	}
+	if got := ml.ClickMoveIdx(0, false); got != 1 {
+		t.Errorf("row 0 right: want 1, got %d", got)
+	}
+	if got := ml.ClickMoveIdx(1, true); got != 2 {
+		t.Errorf("row 1 left: want 2, got %d", got)
+	}
+	if got := ml.ClickMoveIdx(99, true); got != -1 {
+		t.Errorf("out-of-bounds row: want -1, got %d", got)
+	}
+}
+
+func TestMoveListBranchPoint(t *testing.T) {
+	ml := NewMoveList(10)
+	ml.SetMoves([]string{"e4", "e5", "Nf3"}, 2)
+	ml.SetBranchPoint(2) // moves 0,1 are original (dimmed); move 2 is branch
+	view := ml.View()
+	if view == "" {
+		t.Error("expected non-empty view with branch point set")
+	}
+	ml.SetBranchPoint(-1) // clear
+}
+
 func stripANSI(s string) string {
 	var out strings.Builder
 	i := 0
