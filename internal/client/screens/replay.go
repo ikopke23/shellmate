@@ -19,23 +19,32 @@ var (
 
 // ReplayModel provides step-through replay of a past game.
 type ReplayModel struct {
-	pgn        string
-	white      string
-	black      string
-	playedAt   time.Time
-	game       *chess.Game
-	moves      []*chess.Move
-	positions  []*chess.Position
-	sanMoves   []string
-	stepIdx    int // current step (0 = start, len(moves) = end)
-	board      *render.Board
-	moveList   *render.MoveList
-	exportMsg  string
-	err        string
+	pgn       string
+	white     string
+	black     string
+	playedAt  time.Time
+	game      *chess.Game
+	moves     []*chess.Move
+	positions []*chess.Position
+	sanMoves  []string
+	stepIdx   int // current step (0 = start, len(moves) = end)
+	board     *render.Board
+	moveList  *render.MoveList
+	exportMsg string
+	err       string
+	// navigation
 	backScreen ScreenID
 	moveListX  int // X start of move list on screen, computed in View()
 	moveListY  int // Y of first move row, computed in View()
 	serverAddr string
+	// branch mode
+	branchMode      bool
+	branchPointIdx  int               // stepIdx when branch was entered
+	branchGame      *chess.Game       // game state at branch tip
+	branchSAN       []string          // SAN moves played in branch
+	branchPositions []*chess.Position // positions during branch (index 0 = position at branchPointIdx)
+	branchStepIdx   int               // view cursor within combined original+branch moves
+	input           *LocalMoveInput   // active during branch mode
 }
 
 // NewReplayModel creates an empty replay screen.
@@ -98,6 +107,86 @@ func (m *ReplayModel) updateView() {
 	}
 }
 
+// enterBranch starts branch mode from the current stepIdx.
+func (m *ReplayModel) enterBranch() {
+	bg := chess.NewGame()
+	for i := 0; i < m.stepIdx; i++ {
+		if err := bg.MoveStr(m.sanMoves[i]); err != nil {
+			break
+		}
+	}
+	m.branchGame = bg
+	m.branchPointIdx = m.stepIdx
+	m.branchSAN = nil
+	m.branchPositions = []*chess.Position{bg.Position()}
+	m.branchStepIdx = m.stepIdx
+	m.branchMode = true
+	m.input = NewLocalMoveInput(false)
+	m.updateBranchView()
+}
+
+func (m *ReplayModel) exitBranch() {
+	m.branchMode = false
+	m.branchGame = nil
+	m.branchSAN = nil
+	m.branchPositions = nil
+	m.input = nil
+	m.moveList.SetBranchPoint(-1)
+	m.updateView()
+}
+
+func (m *ReplayModel) atBranchTip() bool {
+	return m.branchStepIdx == m.branchPointIdx+len(m.branchSAN)
+}
+
+func (m *ReplayModel) applyBranchMove(san string) {
+	if err := m.branchGame.MoveStr(san); err != nil {
+		return
+	}
+	m.branchSAN = append(m.branchSAN, san)
+	m.branchPositions = append(m.branchPositions, m.branchGame.Position())
+	m.branchStepIdx++
+	m.updateBranchView()
+}
+
+func (m *ReplayModel) branchStepLeft() {
+	if m.branchStepIdx > 0 {
+		m.branchStepIdx--
+		m.updateBranchView()
+	}
+}
+
+func (m *ReplayModel) branchStepRight() {
+	maxIdx := m.branchPointIdx + len(m.branchSAN)
+	if m.branchStepIdx < maxIdx {
+		m.branchStepIdx++
+		m.updateBranchView()
+	}
+}
+
+func (m *ReplayModel) updateBranchView() {
+	allSAN := make([]string, m.branchPointIdx, m.branchPointIdx+len(m.branchSAN))
+	copy(allSAN, m.sanMoves[:m.branchPointIdx])
+	allSAN = append(allSAN, m.branchSAN...)
+	var pos *chess.Position
+	if m.branchStepIdx <= m.branchPointIdx {
+		if m.branchStepIdx < len(m.positions) {
+			pos = m.positions[m.branchStepIdx]
+		}
+	} else {
+		bIdx := m.branchStepIdx - m.branchPointIdx
+		if bIdx < len(m.branchPositions) {
+			pos = m.branchPositions[bIdx]
+		}
+	}
+	if pos != nil {
+		m.board.SetPosition(pos, 0, 0)
+		m.board.ClearHighlight()
+	}
+	m.moveList.SetMoves(allSAN, m.branchStepIdx-1)
+	m.moveList.SetBranchPoint(m.branchPointIdx)
+}
+
 // Init implements tea.Model.
 func (m *ReplayModel) Init() tea.Cmd {
 	return nil
@@ -111,18 +200,62 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if m.branchMode && m.atBranchTip() {
+				san, handled, cmd := m.input.HandleMsg(msg, m.board, m.branchGame)
+				if san != "" {
+					m.applyBranchMove(san)
+					return m, cmd
+				}
+				if handled {
+					return m, cmd
+				}
+			}
+			// Move list click (works in both replay and branch mode)
 			relY := msg.Y - m.moveListY
 			if relY >= 0 && msg.X >= m.moveListX {
 				leftSide := msg.X < m.moveListX+11
-				idx := m.moveList.ClickMoveIdx(relY, leftSide)
-				if idx >= 0 && idx < len(m.moves) {
-					m.stepIdx = idx + 1
-					m.updateView()
+				if m.branchMode {
+					maxIdx := m.branchPointIdx + len(m.branchSAN)
+					idx := m.moveList.ClickMoveIdx(relY, leftSide)
+					if idx >= 0 && idx < maxIdx {
+						m.branchStepIdx = idx + 1
+						m.updateBranchView()
+					}
+				} else {
+					idx := m.moveList.ClickMoveIdx(relY, leftSide)
+					if idx >= 0 && idx < len(m.moves) {
+						m.stepIdx = idx + 1
+						m.updateView()
+					}
 				}
 			}
 		}
 		return m, nil
 	case tea.KeyMsg:
+		if m.branchMode {
+			switch msg.String() {
+			case "esc":
+				m.exitBranch()
+				return m, nil
+			case "left", "h":
+				m.branchStepLeft()
+				return m, nil
+			case "right", "l":
+				m.branchStepRight()
+				return m, nil
+			}
+			if m.atBranchTip() {
+				san, handled, cmd := m.input.HandleMsg(msg, m.board, m.branchGame)
+				if san != "" {
+					m.applyBranchMove(san)
+					return m, cmd
+				}
+				if handled {
+					return m, cmd
+				}
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "q", "esc":
 			return m, func() tea.Msg { return ScreenChangeMsg{Screen: m.backScreen} }
@@ -137,6 +270,10 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.stepIdx < len(m.moves) {
 				m.stepIdx++
 				m.updateView()
+			}
+		case "b":
+			if m.game != nil {
+				m.enterBranch()
 			}
 		case "e":
 			path, err := exportPGN(m.white, m.black, m.playedAt, m.pgn)
@@ -166,20 +303,34 @@ func (m *ReplayModel) View() string {
 	// "Moves" header is the first line of the right side (line 2), move rows start at line 3.
 	m.moveListX = 2 + 8*m.board.CellCols() + 2
 	m.moveListY = 3
-	sb.WriteString(replayStepStyle.Render(
-		strings.Repeat(" ", 3) + stepInfo(m.stepIdx, len(m.moves)),
-	))
-	sb.WriteString("\n")
-	if m.exportMsg != "" {
-		sb.WriteString(replayStepStyle.Render(m.exportMsg))
+	if m.branchMode {
+		sb.WriteString(replayStepStyle.Render("   [BRANCH] " + stepInfo(m.branchStepIdx, m.branchPointIdx+len(m.branchSAN))))
 		sb.WriteString("\n")
+		if m.atBranchTip() {
+			inputY := 2 + m.board.CellRows()*8 + 2
+			m.input.SetPromoPopupY(inputY)
+			sb.WriteString(m.input.View(m.board, m.branchGame))
+		} else {
+			sb.WriteString(replayStepStyle.Render("   (navigate to tip to play)"))
+			sb.WriteString("\n")
+		}
+		sb.WriteString(replayHelpStyle.Render("left/h:back  right/l:fwd  s:save  esc:exit branch"))
+	} else {
+		sb.WriteString(replayStepStyle.Render(
+			strings.Repeat(" ", 3) + stepInfo(m.stepIdx, len(m.moves)),
+		))
+		sb.WriteString("\n")
+		if m.exportMsg != "" {
+			sb.WriteString(replayStepStyle.Render(m.exportMsg))
+			sb.WriteString("\n")
+		}
+		sb.WriteString(replayHelpStyle.Render("left/h:back  right/l:fwd  b:branch  e:export  q/esc:back"))
 	}
+	sb.WriteString("\n")
 	if m.err != "" {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
 		sb.WriteString("\n")
 	}
-	sb.WriteString(replayHelpStyle.Render("left/h:back  right/l:forward  e:export  q/esc:back"))
-	sb.WriteString("\n")
 	return sb.String()
 }
 
