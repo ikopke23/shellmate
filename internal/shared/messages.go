@@ -124,6 +124,7 @@ type HistoryRecord struct {
 	BlackEloAfter  int       `json:"black_elo_after"`
 	PGN            string    `json:"pgn,omitempty"`
 	PlayedAt       time.Time `json:"played_at"`
+	Imported       bool      `json:"imported"`
 }
 
 // GameStart is sent by the server when a game begins.

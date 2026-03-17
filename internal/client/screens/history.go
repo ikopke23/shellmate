@@ -104,8 +104,12 @@ func (m *HistoryModel) View() string {
 		if i == m.cursor {
 			cursor = historyCursorStyle.Render("> ")
 		}
+		result := g.Result
+		if g.Imported {
+			result += " [imported]"
+		}
 		sb.WriteString(fmt.Sprintf("%s%-12s vs %-12s  %s  %s\n",
-			cursor, g.White, g.Black, g.Result, g.PlayedAt.Format("2006-01-02 15:04")))
+			cursor, g.White, g.Black, result, g.PlayedAt.Format("2006-01-02 15:04")))
 	}
 	sb.WriteString("\n")
 	if m.exportMsg != "" {
