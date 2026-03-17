@@ -1,15 +1,22 @@
 package screens
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ikopke/shellmate/internal/client/render"
 	"github.com/notnil/chess"
 )
+
+type usernameCheckDoneMsg struct{ unknown []string }
+type saveImportedDoneMsg struct{}
 
 var (
 	replayTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).Padding(0, 1)
@@ -45,6 +52,14 @@ type ReplayModel struct {
 	branchPositions []*chess.Position // positions during branch (index 0 = position at branchPointIdx)
 	branchStepIdx   int               // view cursor within combined original+branch moves
 	input           *LocalMoveInput   // active during branch mode
+	// save prompt
+	savePromptActive bool
+	saveStep         int // 0=white, 1=black, 2=confirm unknown
+	saveWhiteInput   textinput.Model
+	saveBlackInput   textinput.Model
+	saveUnknownNames []string
+	saveConfirmIdx   int
+	saveMsg          string
 }
 
 // NewReplayModel creates an empty replay screen.
@@ -231,11 +246,37 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case usernameCheckDoneMsg:
+		if len(msg.unknown) == 0 {
+			return m, m.doSave(false)
+		}
+		m.saveUnknownNames = msg.unknown
+		m.saveConfirmIdx = 0
+		m.saveStep = 2
+		return m, nil
+	case saveImportedDoneMsg:
+		m.savePromptActive = false
+		m.saveMsg = "game saved"
+		return m, nil
 	case tea.KeyMsg:
+		if m.savePromptActive {
+			return m.updateSavePrompt(msg)
+		}
 		if m.branchMode {
 			switch msg.String() {
 			case "esc":
 				m.exitBranch()
+				return m, nil
+			case "s":
+				m.savePromptActive = true
+				m.saveStep = 0
+				wi := textinput.New()
+				wi.Placeholder = "White player name"
+				wi.Focus()
+				m.saveWhiteInput = wi
+				bi := textinput.New()
+				bi.Placeholder = "Black player name"
+				m.saveBlackInput = bi
 				return m, nil
 			case "left", "h":
 				m.branchStepLeft()
@@ -327,6 +368,29 @@ func (m *ReplayModel) View() string {
 		sb.WriteString(replayHelpStyle.Render("left/h:back  right/l:fwd  b:branch  e:export  q/esc:back"))
 	}
 	sb.WriteString("\n")
+	if m.savePromptActive {
+		switch m.saveStep {
+		case 0:
+			sb.WriteString(gameStatusStyle.Render("White player: "))
+			sb.WriteString(m.saveWhiteInput.View())
+			sb.WriteString("\n")
+			sb.WriteString(replayHelpStyle.Render("enter:next  esc:cancel"))
+		case 1:
+			sb.WriteString(gameStatusStyle.Render("Black player: "))
+			sb.WriteString(m.saveBlackInput.View())
+			sb.WriteString("\n")
+			sb.WriteString(replayHelpStyle.Render("enter:save  esc:back"))
+		case 2:
+			name := m.saveUnknownNames[m.saveConfirmIdx]
+			sb.WriteString(importErrStyle.Render(fmt.Sprintf(
+				"Warning: '%s' not found — will create new user. Typos won't appear in the right history. Confirm? (y/n)", name)))
+		}
+		sb.WriteString("\n")
+	}
+	if m.saveMsg != "" {
+		sb.WriteString(gameStatusStyle.Render(m.saveMsg))
+		sb.WriteString("\n")
+	}
 	if m.err != "" {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
 		sb.WriteString("\n")
@@ -339,4 +403,114 @@ func stepInfo(current, total int) string {
 		return "No moves"
 	}
 	return fmt.Sprintf("Move %d/%d", current, total)
+}
+
+func (m *ReplayModel) updateSavePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.saveStep {
+	case 0:
+		if msg.String() == "enter" && strings.TrimSpace(m.saveWhiteInput.Value()) != "" {
+			m.saveStep = 1
+			m.saveBlackInput.Focus()
+			return m, nil
+		}
+		if msg.String() == "esc" {
+			m.savePromptActive = false
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.saveWhiteInput, cmd = m.saveWhiteInput.Update(msg)
+		return m, cmd
+	case 1:
+		if msg.String() == "enter" && strings.TrimSpace(m.saveBlackInput.Value()) != "" {
+			return m, m.checkUsernames()
+		}
+		if msg.String() == "esc" {
+			m.saveStep = 0
+			m.saveWhiteInput.Focus()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.saveBlackInput, cmd = m.saveBlackInput.Update(msg)
+		return m, cmd
+	case 2:
+		switch msg.String() {
+		case "y":
+			if m.saveConfirmIdx < len(m.saveUnknownNames)-1 {
+				m.saveConfirmIdx++
+				return m, nil
+			}
+			return m, m.doSave(true)
+		case "n":
+			m.saveStep = 1
+			m.saveUnknownNames = nil
+			m.saveBlackInput.Focus()
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+func (m *ReplayModel) checkUsernames() tea.Cmd {
+	white := strings.TrimSpace(m.saveWhiteInput.Value())
+	black := strings.TrimSpace(m.saveBlackInput.Value())
+	addr := m.serverAddr
+	return func() tea.Msg {
+		var unknown []string
+		for _, name := range []string{white, black} {
+			resp, err := http.Get("http://" + addr + "/check-username?name=" + name)
+			if err != nil {
+				return ErrMsg{Err: err}
+			}
+			var result struct {
+				Exists bool `json:"exists"`
+			}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+			resp.Body.Close()
+			if decodeErr != nil {
+				return ErrMsg{Err: decodeErr}
+			}
+			if !result.Exists {
+				unknown = append(unknown, name)
+			}
+		}
+		return usernameCheckDoneMsg{unknown: unknown}
+	}
+}
+
+func (m *ReplayModel) doSave(forceCreate bool) tea.Cmd {
+	white := strings.TrimSpace(m.saveWhiteInput.Value())
+	black := strings.TrimSpace(m.saveBlackInput.Value())
+	pgn := m.buildBranchPGN()
+	addr := m.serverAddr
+	return func() tea.Msg {
+		body := struct {
+			White       string `json:"white"`
+			Black       string `json:"black"`
+			PGN         string `json:"pgn"`
+			ForceCreate bool   `json:"force_create"`
+		}{white, black, pgn, forceCreate}
+		data, _ := json.Marshal(body)
+		resp, err := http.Post("http://"+addr+"/save-imported", "application/json", bytes.NewReader(data))
+		if err != nil {
+			return ErrMsg{Err: err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			return ErrMsg{Err: fmt.Errorf("server returned %d", resp.StatusCode)}
+		}
+		return saveImportedDoneMsg{}
+	}
+}
+
+func (m *ReplayModel) buildBranchPGN() string {
+	allSAN := make([]string, m.branchPointIdx, m.branchPointIdx+len(m.branchSAN))
+	copy(allSAN, m.sanMoves[:m.branchPointIdx])
+	allSAN = append(allSAN, m.branchSAN...)
+	g := chess.NewGame()
+	for _, san := range allSAN {
+		if err := g.MoveStr(san); err != nil {
+			break
+		}
+	}
+	return g.String()
 }
