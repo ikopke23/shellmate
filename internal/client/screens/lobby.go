@@ -76,6 +76,10 @@ func (m *LobbyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLeaderboard} }
 		case "h":
 			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenHistory} }
+		case "i":
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenImport} }
+		case "m":
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenImportedGames} }
 		}
 	}
 	return m, nil
@@ -170,7 +174,7 @@ func (m *LobbyModel) View() string {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
 		sb.WriteString("\n")
 	}
-	sb.WriteString(lobbyHelpStyle.Render("n:new  enter:join  s:spectate  h:history  l:leaderboard  q:quit"))
+	sb.WriteString(lobbyHelpStyle.Render("n:new  enter:join  s:spectate  h:history  i:import  m:imported  l:leaderboard  q:quit"))
 	sb.WriteString("\n")
 	return sb.String()
 }

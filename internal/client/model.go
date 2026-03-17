@@ -16,18 +16,19 @@ type leaderboardLoadedMsg struct{ players []shared.PlayerInfo }
 
 // Model is the root bubbletea model.
 type Model struct {
-	screen      screens.ScreenID
-	conn        *websocket.Conn
-	username    string
-	serverAddr  string
-	login       *screens.LoginModel
-	lobby       *screens.LobbyModel
-	game        *screens.GameModel
-	history     *screens.HistoryModel
-	replay      *screens.ReplayModel
-	leaderboard *screens.LeaderboardModel
-	width       int
-	height      int
+	screen       screens.ScreenID
+	conn         *websocket.Conn
+	username     string
+	serverAddr   string
+	login        *screens.LoginModel
+	lobby        *screens.LobbyModel
+	game         *screens.GameModel
+	history      *screens.HistoryModel
+	replay       *screens.ReplayModel
+	leaderboard  *screens.LeaderboardModel
+	importScreen *screens.ImportModel
+	width        int
+	height       int
 }
 
 // NewModel creates the root model starting at the login screen.
@@ -125,6 +126,12 @@ func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.leaderboard = lm
 		}
 		return m, cmd
+	case screens.ScreenImport:
+		updated, cmd := m.importScreen.Update(msg)
+		if im, ok := updated.(*screens.ImportModel); ok {
+			m.importScreen = im
+		}
+		return m, cmd
 	}
 	return m, nil
 }
@@ -140,11 +147,24 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 		m.history = screens.NewHistoryModel(m.username, m.conn)
 		m.screen = screens.ScreenHistory
 		return m, m.fetchHistory()
+	case screens.ScreenImport:
+		m.importScreen = screens.NewImportModel()
+		m.screen = screens.ScreenImport
 	case screens.ScreenReplay:
 		m.replay = screens.NewReplayModel()
-		if rec, ok := msg.Data.(shared.HistoryRecord); ok && rec.PGN != "" {
-			_ = m.replay.LoadPGN(rec.PGN)
-			m.replay.SetMeta(rec.White, rec.Black, rec.PlayedAt)
+		m.replay.SetServerAddr(m.serverAddr)
+		switch d := msg.Data.(type) {
+		case shared.HistoryRecord:
+			if d.PGN != "" {
+				_ = m.replay.LoadPGN(d.PGN)
+				m.replay.SetMeta(d.White, d.Black, d.PlayedAt)
+				m.replay.SetBackScreen(screens.ScreenHistory)
+			}
+		case screens.ImportPGNData:
+			if d.Record.PGN != "" {
+				_ = m.replay.LoadPGN(d.Record.PGN)
+				m.replay.SetBackScreen(screens.ScreenImport)
+			}
 		}
 		m.screen = screens.ScreenReplay
 	case screens.ScreenLeaderboard:
@@ -258,6 +278,10 @@ func (m Model) View() string {
 	case screens.ScreenLeaderboard:
 		if m.leaderboard != nil {
 			return m.leaderboard.View()
+		}
+	case screens.ScreenImport:
+		if m.importScreen != nil {
+			return m.importScreen.View()
 		}
 	}
 	return ""

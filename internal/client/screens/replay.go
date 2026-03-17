@@ -35,6 +35,7 @@ type ReplayModel struct {
 	backScreen ScreenID
 	moveListX  int // X start of move list on screen, computed in View()
 	moveListY  int // Y of first move row, computed in View()
+	serverAddr string
 }
 
 // NewReplayModel creates an empty replay screen.
@@ -49,6 +50,11 @@ func NewReplayModel() *ReplayModel {
 // SetBackScreen sets the screen to return to when the user exits replay.
 func (m *ReplayModel) SetBackScreen(s ScreenID) {
 	m.backScreen = s
+}
+
+// SetServerAddr sets the server address for HTTP calls (save-imported, check-username).
+func (m *ReplayModel) SetServerAddr(addr string) {
+	m.serverAddr = addr
 }
 
 // LoadPGN parses a PGN string and sets up the replay.
