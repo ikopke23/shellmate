@@ -50,6 +50,21 @@ type HistoryRecord struct {
 	Imported       bool      `json:"imported"`
 }
 
+// PuzzleRow is one row from the puzzles table.
+type PuzzleRow struct {
+	ID          string
+	FEN         string
+	Moves       string
+	Rating      int
+	RatingDev   int
+	Popularity  int
+	NbPlays     int
+	Themes      []string
+	GameURL     string
+	OpeningTags []string
+	PuzzleDate  time.Time
+}
+
 // NewDB connects to Postgres using connStr, applies the migration at migrationSQL, and returns a DB.
 // migrationSQL is the content of migrations/001_init.sql passed as a string (server reads it at startup).
 func NewDB(ctx context.Context, connStr string, migrationSQL string) (*DB, error) {
@@ -95,7 +110,7 @@ func (d *DB) SaveGameAndUpdateElo(ctx context.Context, g GameRecord, whiteElo, b
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx,
 		`INSERT INTO games (white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -225,4 +240,121 @@ func (d *DB) GetImportedGames(ctx context.Context) ([]HistoryRecord, error) {
 		records = append(records, r)
 	}
 	return records, rows.Err()
+}
+
+// SavePuzzle inserts a puzzle into the cache. Silently skips if the ID already exists.
+func (d *DB) SavePuzzle(ctx context.Context, p PuzzleRow) error {
+	_, err := d.pool.Exec(ctx,
+		`INSERT INTO puzzles (id, fen, moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 ON CONFLICT (id) DO NOTHING`,
+		p.ID, p.FEN, p.Moves, p.Rating, p.RatingDev, p.Popularity, p.NbPlays,
+		p.Themes, p.GameURL, p.OpeningTags, p.PuzzleDate,
+	)
+	return err
+}
+
+// GetTodaysPuzzle returns the cached puzzle for today (UTC date), or nil if none.
+func (d *DB) GetTodaysPuzzle(ctx context.Context) (*PuzzleRow, error) {
+	p := &PuzzleRow{}
+	err := d.pool.QueryRow(ctx,
+		`SELECT id, fen, moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date
+		 FROM puzzles WHERE puzzle_date = CURRENT_DATE LIMIT 1`,
+	).Scan(&p.ID, &p.FEN, &p.Moves, &p.Rating, &p.RatingDev, &p.Popularity, &p.NbPlays,
+		&p.Themes, &p.GameURL, &p.OpeningTags, &p.PuzzleDate)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// GetNextPuzzle returns an unseen puzzle for username from today's date, or nil if none available.
+// Only serves today's daily puzzle — enforces the daily-puzzle-only contract.
+func (d *DB) GetNextPuzzle(ctx context.Context, username string) (*PuzzleRow, error) {
+	p := &PuzzleRow{}
+	err := d.pool.QueryRow(ctx,
+		`SELECT id, fen, moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date
+		 FROM puzzles
+		 WHERE puzzle_date = CURRENT_DATE
+		   AND id NOT IN (SELECT puzzle_id FROM user_puzzle_attempts WHERE username = $1)
+		 ORDER BY fetched_at ASC
+		 LIMIT 1`,
+		username,
+	).Scan(&p.ID, &p.FEN, &p.Moves, &p.Rating, &p.RatingDev, &p.Popularity, &p.NbPlays,
+		&p.Themes, &p.GameURL, &p.OpeningTags, &p.PuzzleDate)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// CountUnseenPuzzles returns how many of today's puzzles the user has not yet attempted.
+func (d *DB) CountUnseenPuzzles(ctx context.Context, username string) (int, error) {
+	var n int
+	err := d.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM puzzles
+		 WHERE puzzle_date = CURRENT_DATE
+		   AND id NOT IN (SELECT puzzle_id FROM user_puzzle_attempts WHERE username = $1)`,
+		username,
+	).Scan(&n)
+	return n, err
+}
+
+// RecordAttemptAndUpdateRating atomically records a puzzle attempt and updates the user's puzzle rating.
+func (d *DB) RecordAttemptAndUpdateRating(ctx context.Context, username, puzzleID string, solved bool, newRating int) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx,
+		`INSERT INTO user_puzzle_attempts (username, puzzle_id, solved) VALUES ($1, $2, $3)`,
+		username, puzzleID, solved,
+	); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx,
+		`UPDATE users SET puzzle_rating = $1 WHERE username = $2`,
+		newRating, username,
+	); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// GetPuzzleRating returns the user's current puzzle rating. Returns 1500 if user not found.
+func (d *DB) GetPuzzleRating(ctx context.Context, username string) (int, error) {
+	var rating int
+	err := d.pool.QueryRow(ctx,
+		`SELECT puzzle_rating FROM users WHERE username = $1`,
+		username,
+	).Scan(&rating)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 1500, nil
+	}
+	return rating, err
+}
+
+// GetPuzzleByID returns the puzzle with the given ID, or nil if not found.
+func (d *DB) GetPuzzleByID(ctx context.Context, id string) (*PuzzleRow, error) {
+	p := &PuzzleRow{}
+	err := d.pool.QueryRow(ctx,
+		`SELECT id, fen, moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date
+		 FROM puzzles WHERE id = $1`,
+		id,
+	).Scan(&p.ID, &p.FEN, &p.Moves, &p.Rating, &p.RatingDev, &p.Popularity, &p.NbPlays,
+		&p.Themes, &p.GameURL, &p.OpeningTags, &p.PuzzleDate)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
