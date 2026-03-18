@@ -139,6 +139,22 @@ type Resign struct {
 	GameID string `json:"game_id"`
 }
 
+// PuzzleRecord describes a puzzle returned by GET /puzzle.
+type PuzzleRecord struct {
+	ID               string   `json:"id"`
+	FEN              string   `json:"fen"`
+	Moves            string   `json:"moves"`
+	Rating           int      `json:"rating"`
+	Themes           []string `json:"themes"`
+	GameURL          string   `json:"game_url"`
+	UserPuzzleRating int      `json:"user_puzzle_rating"`
+}
+
+// PuzzleAttemptResult is returned by POST /puzzle/attempt.
+type PuzzleAttemptResult struct {
+	PuzzleRating int `json:"puzzle_rating"`
+}
+
 // Encode wraps a payload into an Envelope and marshals it to JSON.
 func Encode(msgType MsgType, payload any) ([]byte, error) {
 	raw, err := json.Marshal(payload)
