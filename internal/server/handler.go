@@ -184,6 +184,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
+		if puzzle == nil {
+			http.Error(w, "no puzzle available", http.StatusServiceUnavailable)
+			return
+		}
 		record := shared.PuzzleRecord{
 			ID:               puzzle.ID,
 			FEN:              puzzle.FEN,

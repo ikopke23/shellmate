@@ -52,6 +52,7 @@ type PuzzleModel struct {
 	userPuzzleRating int
 	lastDelta        int
 	hasDelta         bool
+	submitted        bool
 	err              string
 }
 
@@ -73,6 +74,7 @@ func (m *PuzzleModel) SetPuzzle(record shared.PuzzleRecord) {
 	m.solution = strings.Fields(record.Moves)
 	m.initialFEN = record.FEN
 	m.hasDelta = false
+	m.submitted = false
 	m.err = ""
 	m.initGame()
 }
@@ -103,6 +105,7 @@ func (m *PuzzleModel) initGame() {
 	m.game = g
 	m.solutionIdx = 1
 	m.input = NewLocalMoveInput(false)
+	m.submitted = false
 	m.state = puzzleStatePlaying
 }
 
@@ -245,9 +248,10 @@ func (m *PuzzleModel) initCmd() tea.Cmd {
 }
 
 func (m *PuzzleModel) submitAttempt(solved bool) tea.Cmd {
-	if m.record == nil {
+	if m.record == nil || m.submitted {
 		return nil
 	}
+	m.submitted = true
 	id := m.record.ID
 	username := m.username
 	addr := m.serverAddr

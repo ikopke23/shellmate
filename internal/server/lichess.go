@@ -11,7 +11,7 @@ import (
 	"github.com/notnil/chess"
 )
 
-const lichessDailyURL = "https://lichess.org/api/puzzle/daily" //nolint:unused
+const lichessDailyURL = "https://lichess.org/api/puzzle/daily"
 
 type lichessPuzzleData struct {
 	ID              string   `json:"id"`
@@ -51,7 +51,7 @@ func fenAtPly(pgnText string, ply int) (string, error) {
 }
 
 // fetchDailyPuzzle retrieves today's puzzle from the Lichess public API.
-func fetchDailyPuzzle(ctx context.Context) (*lichessPuzzleResponse, error) { //nolint:unused
+func fetchDailyPuzzle(ctx context.Context) (*lichessPuzzleResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, lichessDailyURL, nil)
 	if err != nil {
 		return nil, err
