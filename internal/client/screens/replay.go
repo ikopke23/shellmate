@@ -312,6 +312,16 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.stepIdx++
 				m.updateView()
 			}
+		case "[":
+			rows := m.board.CellRows()
+			if rows > 2 {
+				m.board.SetCellSize((rows-1)*2, rows-1)
+			}
+		case "]":
+			rows := m.board.CellRows()
+			if rows < 8 {
+				m.board.SetCellSize((rows+1)*2, rows+1)
+			}
 		case "b":
 			if m.game != nil {
 				m.enterBranch()
@@ -365,7 +375,7 @@ func (m *ReplayModel) View() string {
 			sb.WriteString(replayStepStyle.Render(m.exportMsg))
 			sb.WriteString("\n")
 		}
-		sb.WriteString(replayHelpStyle.Render("left/h:back  right/l:fwd  b:branch  e:export  q/esc:back"))
+		sb.WriteString(replayHelpStyle.Render("left/h:back  right/l:fwd  [:smaller  ]:larger  b:branch  e:export  q/esc:back"))
 	}
 	sb.WriteString("\n")
 	if m.savePromptActive {
