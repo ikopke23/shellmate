@@ -72,7 +72,7 @@ func main() {
 }
 
 func readMigrations() (string, error) {
-	files := []string{"001_init.sql", "002_imported.sql"}
+	files := []string{"001_init.sql", "002_imported.sql", "003_puzzles.sql"}
 	var combined strings.Builder
 	for _, f := range files {
 		data, err := readMigrationFile(f)
