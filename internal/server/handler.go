@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/websocket"
+	"github.com/ikopke/shellmate/internal/shared"
 )
 
 type saveImportedRequest struct {
@@ -17,6 +18,12 @@ type saveImportedRequest struct {
 
 type checkUsernameResponse struct {
 	Exists bool `json:"exists"`
+}
+
+type puzzleAttemptRequest struct {
+	Username string `json:"username"`
+	PuzzleID string `json:"puzzle_id"`
+	Solved   bool   `json:"solved"`
 }
 
 // Handler holds the hub and upgrader for HTTP/WS handling.
@@ -139,6 +146,55 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(records)
+	case "/puzzle/attempt":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req puzzleAttemptRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Username == "" || req.PuzzleID == "" {
+			http.Error(w, "username and puzzle_id are required", http.StatusBadRequest)
+			return
+		}
+		newRating, err := h.hub.RecordPuzzleAttempt(r.Context(), req.Username, req.PuzzleID, req.Solved)
+		if err != nil {
+			slog.Error("failed to record puzzle attempt", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(shared.PuzzleAttemptResult{PuzzleRating: newRating})
+	case "/puzzle":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		username := r.URL.Query().Get("user")
+		if username == "" {
+			http.Error(w, "user parameter required", http.StatusBadRequest)
+			return
+		}
+		puzzle, userRating, err := h.hub.GetPuzzleForUser(r.Context(), username)
+		if err != nil {
+			slog.Error("failed to get puzzle", "error", err, "username", username)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		record := shared.PuzzleRecord{
+			ID:               puzzle.ID,
+			FEN:              puzzle.FEN,
+			Moves:            puzzle.Moves,
+			Rating:           puzzle.Rating,
+			Themes:           puzzle.Themes,
+			GameURL:          puzzle.GameURL,
+			UserPuzzleRating: userRating,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(record)
 	default:
 		http.NotFound(w, r)
 	}

@@ -81,6 +81,72 @@ func (h *Hub) GetImportedGames(ctx context.Context) ([]HistoryRecord, error) {
 	return h.db.GetImportedGames(ctx)
 }
 
+// GetPuzzleForUser returns an unseen puzzle for the user, fetching from Lichess if needed.
+// If the unseen count after serving drops below 3, a background goroutine prefetches today's puzzle.
+func (h *Hub) GetPuzzleForUser(ctx context.Context, username string) (*PuzzleRow, int, error) {
+	puzzle, err := h.db.GetNextPuzzle(ctx, username)
+	if err != nil {
+		return nil, 0, err
+	}
+	if puzzle == nil {
+		// no unseen puzzles — fetch today's from Lichess
+		resp, err := fetchDailyPuzzle(ctx)
+		if err != nil {
+			return nil, 0, fmt.Errorf("lichess fetch: %w", err)
+		}
+		row, err := toPuzzleRow(resp)
+		if err != nil {
+			return nil, 0, err
+		}
+		if err := h.db.SavePuzzle(ctx, *row); err != nil {
+			return nil, 0, err
+		}
+		puzzle = row
+	}
+	// background prefetch if buffer is low
+	go func() {
+		count, err := h.db.CountUnseenPuzzles(context.Background(), username)
+		if err != nil || count >= 3 {
+			return
+		}
+		resp, err := fetchDailyPuzzle(context.Background())
+		if err != nil {
+			slog.Warn("background puzzle prefetch failed", "error", err)
+			return
+		}
+		row, err := toPuzzleRow(resp)
+		if err != nil {
+			return
+		}
+		if err := h.db.SavePuzzle(context.Background(), *row); err != nil {
+			slog.Warn("background puzzle save failed", "error", err)
+		}
+	}()
+	rating, err := h.db.GetPuzzleRating(ctx, username)
+	if err != nil {
+		return nil, 0, err
+	}
+	return puzzle, rating, nil
+}
+
+// RecordPuzzleAttempt records the attempt and updates the user's puzzle rating atomically.
+// Returns the new puzzle rating.
+func (h *Hub) RecordPuzzleAttempt(ctx context.Context, username, puzzleID string, solved bool) (int, error) {
+	puzzle, err := h.db.GetPuzzleByID(ctx, puzzleID)
+	if err != nil || puzzle == nil {
+		return 0, fmt.Errorf("puzzle not found: %s", puzzleID)
+	}
+	currentRating, err := h.db.GetPuzzleRating(ctx, username)
+	if err != nil {
+		return 0, err
+	}
+	newRating := PuzzleEloOutcome(currentRating, puzzle.Rating, solved)
+	if err := h.db.RecordAttemptAndUpdateRating(ctx, username, puzzleID, solved, newRating); err != nil {
+		return 0, err
+	}
+	return newRating, nil
+}
+
 // Register adds a new authenticated client to the hub.
 // If there is already a connection for this username, the old connection is closed.
 func (h *Hub) Register(username string, conn *websocket.Conn) *Client {
