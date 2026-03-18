@@ -2,7 +2,10 @@ package client
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
@@ -391,12 +394,16 @@ func (m *Model) fetchPuzzle() tea.Cmd {
 		url := "http://" + m.serverAddr + "/puzzle?user=" + m.username
 		resp, err := http.Get(url)
 		if err != nil {
-			return screens.ErrMsg{Err: err}
+			return screens.ErrMsg{Err: fmt.Errorf("fetch puzzle: %w", err)}
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return screens.ErrMsg{Err: fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))}
+		}
 		var record shared.PuzzleRecord
 		if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
-			return screens.ErrMsg{Err: err}
+			return screens.ErrMsg{Err: fmt.Errorf("decode puzzle response: %w", err)}
 		}
 		return puzzleLoadedMsg{record: record}
 	}

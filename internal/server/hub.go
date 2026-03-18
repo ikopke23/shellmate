@@ -84,24 +84,34 @@ func (h *Hub) GetImportedGames(ctx context.Context) ([]HistoryRecord, error) {
 // GetPuzzleForUser returns an unseen puzzle for the user, fetching from Lichess if needed.
 // If the unseen count after serving drops below 3, a background goroutine prefetches today's puzzle.
 func (h *Hub) GetPuzzleForUser(ctx context.Context, username string) (*PuzzleRow, int, error) {
+	slog.Info("getting puzzle for user", "username", username)
 	puzzle, err := h.db.GetNextPuzzle(ctx, username)
 	if err != nil {
+		slog.Error("GetNextPuzzle failed", "username", username, "error", err)
 		return nil, 0, err
 	}
 	if puzzle == nil {
+		slog.Info("no cached puzzle found, fetching from lichess", "username", username)
 		// no unseen puzzles — fetch today's from Lichess
 		resp, err := fetchDailyPuzzle(ctx)
 		if err != nil {
+			slog.Error("lichess fetch failed", "username", username, "error", err)
 			return nil, 0, fmt.Errorf("lichess fetch: %w", err)
 		}
+		slog.Info("lichess fetch succeeded", "puzzle_id", resp.Puzzle.ID)
 		row, err := toPuzzleRow(resp)
 		if err != nil {
+			slog.Error("toPuzzleRow failed", "puzzle_id", resp.Puzzle.ID, "error", err)
 			return nil, 0, err
 		}
 		if err := h.db.SavePuzzle(ctx, *row); err != nil {
+			slog.Error("SavePuzzle failed", "puzzle_id", row.ID, "error", err)
 			return nil, 0, err
 		}
+		slog.Info("puzzle saved to cache", "puzzle_id", row.ID)
 		puzzle = row
+	} else {
+		slog.Info("serving cached puzzle", "puzzle_id", puzzle.ID, "username", username)
 	}
 	// background prefetch if buffer is low
 	go func() {

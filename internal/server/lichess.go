@@ -13,6 +13,8 @@ import (
 
 const lichessDailyURL = "https://lichess.org/api/puzzle/daily"
 
+var lichessClient = &http.Client{Timeout: 10 * time.Second}
+
 type lichessPuzzleData struct {
 	ID              string   `json:"id"`
 	Rating          int      `json:"rating"`
@@ -57,7 +59,7 @@ func fetchDailyPuzzle(ctx context.Context) (*lichessPuzzleResponse, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := lichessClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

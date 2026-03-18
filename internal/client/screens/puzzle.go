@@ -285,7 +285,11 @@ func (m *PuzzleModel) skipAndSubmit() tea.Cmd {
 // View implements tea.Model.
 func (m *PuzzleModel) View() string {
 	if m.state == puzzleStateLoading {
-		return puzzleTitleStyle.Render("Puzzle Mode") + "\n\nLoading puzzle...\n"
+		title := puzzleTitleStyle.Render("Puzzle Mode") + "\n\n"
+		if m.err != "" {
+			return title + puzzleBadStyle.Render("Error: "+m.err) + "\n\n" + puzzleHelpStyle.Render("q:back") + "\n"
+		}
+		return title + "Loading puzzle...\n"
 	}
 	var sb strings.Builder
 	sb.WriteString(puzzleTitleStyle.Render("Puzzle Mode"))
