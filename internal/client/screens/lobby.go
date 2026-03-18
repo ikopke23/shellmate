@@ -18,6 +18,7 @@ var lobbyKeybinds = []string{
 	"i:import",
 	"m:imported",
 	"l:leaderboard",
+	"p:puzzle",
 	"q:quit",
 }
 
@@ -91,6 +92,8 @@ func (m *LobbyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenImport} }
 		case "m":
 			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenImportedGames} }
+		case "p":
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenPuzzle} }
 		}
 	}
 	return m, nil

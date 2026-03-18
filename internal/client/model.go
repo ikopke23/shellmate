@@ -14,6 +14,7 @@ import (
 type historyLoadedMsg struct{ records []shared.HistoryRecord }
 type leaderboardLoadedMsg struct{ players []shared.PlayerInfo }
 type importedGamesLoadedMsg struct{ records []shared.HistoryRecord }
+type puzzleLoadedMsg struct{ record shared.PuzzleRecord }
 
 // Model is the root bubbletea model.
 type Model struct {
@@ -29,6 +30,7 @@ type Model struct {
 	leaderboard   *screens.LeaderboardModel
 	importScreen  *screens.ImportModel
 	importedGames *screens.ImportedGamesModel
+	puzzle        *screens.PuzzleModel
 	width         int
 	height        int
 }
@@ -89,6 +91,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.importedGames.SetGames(msg.records)
 		}
 		return m, nil
+	case puzzleLoadedMsg:
+		if m.puzzle != nil {
+			m.puzzle.SetPuzzle(msg.record)
+		}
+		return m, nil
 	case screens.ErrMsg:
 		// pass through to active screen
 	}
@@ -145,6 +152,12 @@ func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.importedGames = ig
 		}
 		return m, cmd
+	case screens.ScreenPuzzle:
+		updated, cmd := m.puzzle.Update(msg)
+		if pm, ok := updated.(*screens.PuzzleModel); ok {
+			m.puzzle = pm
+		}
+		return m, cmd
 	}
 	return m, nil
 }
@@ -194,6 +207,10 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 		m.leaderboard = screens.NewLeaderboardModel(m.conn)
 		m.screen = screens.ScreenLeaderboard
 		return m, m.fetchLeaderboard()
+	case screens.ScreenPuzzle:
+		m.puzzle = screens.NewPuzzleModel(m.serverAddr, m.username)
+		m.screen = screens.ScreenPuzzle
+		return m, m.fetchPuzzle()
 	case screens.ScreenGame:
 		// game screen is set up by game_start messages
 		m.screen = screens.ScreenGame
@@ -310,6 +327,10 @@ func (m Model) View() string {
 		if m.importedGames != nil {
 			return m.importedGames.View()
 		}
+	case screens.ScreenPuzzle:
+		if m.puzzle != nil {
+			return m.puzzle.View()
+		}
 	}
 	return ""
 }
@@ -362,6 +383,22 @@ func (m *Model) fetchLeaderboard() tea.Cmd {
 			return screens.ErrMsg{Err: err}
 		}
 		return leaderboardLoadedMsg{players: players}
+	}
+}
+
+func (m *Model) fetchPuzzle() tea.Cmd {
+	return func() tea.Msg {
+		url := "http://" + m.serverAddr + "/puzzle?user=" + m.username
+		resp, err := http.Get(url)
+		if err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		defer resp.Body.Close()
+		var record shared.PuzzleRecord
+		if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		return puzzleLoadedMsg{record: record}
 	}
 }
 
