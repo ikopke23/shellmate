@@ -88,7 +88,7 @@ func (m *PuzzleModel) initGame() {
 	}
 	g := chess.NewGame(fenOpt)
 	if len(m.solution) > 0 {
-		uci := chess.LongAlgebraicNotation{}
+		uci := chess.UCINotation{}
 		move, err := uci.Decode(g.Position(), m.solution[0])
 		if err != nil {
 			m.err = fmt.Sprintf("apply setup move: %v", err)
@@ -123,7 +123,7 @@ func (m *PuzzleModel) validateAndApply(userSAN string) bool {
 	}
 	expectedUCI := m.solution[m.solutionIdx]
 	algN := chess.AlgebraicNotation{}
-	uciN := chess.LongAlgebraicNotation{}
+	uciN := chess.UCINotation{}
 	pos := m.game.Position()
 	var matchedMove *chess.Move
 	for _, mv := range m.game.ValidMoves() {
@@ -161,6 +161,9 @@ func (m *PuzzleModel) validateAndApply(userSAN string) bool {
 				}
 				break
 			}
+		}
+		if m.solutionIdx >= len(m.solution) {
+			m.state = puzzleStateSuccess
 		}
 		return true
 	}
@@ -206,6 +209,18 @@ func (m *PuzzleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == puzzleStateSuccess {
 				return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenPuzzle} }
 			}
+		case "[":
+			rows := m.board.CellRows()
+			if rows > 2 {
+				m.board.SetCellSize((rows-1)*2, rows-1)
+			}
+			return m, nil
+		case "]":
+			rows := m.board.CellRows()
+			if rows < 8 {
+				m.board.SetCellSize((rows+1)*2, rows+1)
+			}
+			return m, nil
 		}
 		if m.state == puzzleStatePlaying && m.input != nil {
 			san, _, cmd := m.input.HandleMsg(msg, m.board, m.game)
@@ -317,9 +332,9 @@ func (m *PuzzleModel) View() string {
 	var help string
 	switch m.state {
 	case puzzleStatePlaying:
-		help = "enter/click:move  n:skip  q:back"
+		help = "enter/click:move  [:smaller  ]:larger  n:skip  q:back"
 	default:
-		help = "r:retry  n:next  q:back"
+		help = "r:retry  [:smaller  ]:larger  n:next  q:back"
 	}
 	sb.WriteString(puzzleHelpStyle.Render(help))
 	sb.WriteString("\n")
