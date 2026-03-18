@@ -75,9 +75,11 @@ func fetchDailyPuzzle(ctx context.Context) (*lichessPuzzleResponse, error) {
 }
 
 // toPuzzleRow converts a Lichess API response to a PuzzleRow ready for storage.
-// FEN is derived server-side from the game PGN at initialPly.
+// FEN is derived server-side from the game PGN at initialPly-1:
+// Lichess's initialPly is the ply index of solution[0] in the game, so the
+// position FROM WHICH solution[0] will be applied is positions[initialPly-1].
 func toPuzzleRow(resp *lichessPuzzleResponse) (*PuzzleRow, error) {
-	fen, err := fenAtPly(resp.Game.PGN, resp.Puzzle.InitialPly)
+	fen, err := fenAtPly(resp.Game.PGN, resp.Puzzle.InitialPly-1)
 	if err != nil {
 		return nil, fmt.Errorf("derive fen: %w", err)
 	}
