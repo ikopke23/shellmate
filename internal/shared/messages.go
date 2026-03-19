@@ -58,8 +58,31 @@ type LobbyState struct {
 	Games   []GameInfo   `json:"games"`
 }
 
-// CreateGame is an empty signal from a client requesting a new game be created.
-type CreateGame struct{}
+// TimeControl describes the time limit and increment for a game.
+// InitialSeconds == 0 means untimed.
+type TimeControl struct {
+	InitialSeconds   int `json:"initial_seconds"`
+	IncrementSeconds int `json:"increment_seconds"`
+}
+
+// ClockState carries both players' remaining time in milliseconds.
+type ClockState struct {
+	WhiteMs int `json:"white_ms"`
+	BlackMs int `json:"black_ms"`
+}
+
+// MoveMsg is broadcast by the server after each legal move.
+// SAN is intentionally omitted — Moves supersedes it.
+type MoveMsg struct {
+	GameID string     `json:"game_id"`
+	Moves  []string   `json:"moves"`
+	Clock  ClockState `json:"clock"` // zero value used for untimed games
+}
+
+// CreateGame is sent by a client requesting a new game with a chosen time control.
+type CreateGame struct {
+	TimeControl TimeControl `json:"time_control"`
+}
 
 // JoinGame is sent by a client to join an existing game as a player.
 type JoinGame struct {
@@ -129,9 +152,10 @@ type HistoryRecord struct {
 
 // GameStart is sent by the server when a game begins.
 type GameStart struct {
-	GameID string `json:"game_id"`
-	White  string `json:"white"`
-	Black  string `json:"black"`
+	GameID      string      `json:"game_id"`
+	White       string      `json:"white"`
+	Black       string      `json:"black"`
+	TimeControl TimeControl `json:"time_control"`
 }
 
 // Resign is sent by a player to forfeit the game.
