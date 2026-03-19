@@ -332,7 +332,8 @@ func (h *Hub) Route(ctx context.Context, c *Client, env shared.Envelope) {
 func (h *Hub) handleCreateGame(ctx context.Context, c *Client) {
 	id := generateID()
 	h.mu.Lock()
-	g := NewGame(id, c, nil)
+	// TODO(Task 3): unmarshal shared.CreateGame payload and pass TimeControl to NewGame.
+	g := NewGame(id, c, nil, 0, 0)
 	h.games[id] = g
 	c.game = id
 	h.mu.Unlock()
@@ -363,6 +364,7 @@ func (h *Hub) handleJoinGame(ctx context.Context, c *Client, payload shared.Join
 	}
 	g.black = c
 	c.game = payload.GameID
+	g.turnStartedAt = time.Now()
 	whiteUsername := g.white.username
 	g.mu.Unlock()
 	h.mu.Unlock()
@@ -419,9 +421,12 @@ func (h *Hub) handleSpectateGame(ctx context.Context, c *Client, payload shared.
 	started := g.black != nil
 	var whiteUsername, blackUsername string
 	var moveList []string
+	var whiteMs, blackMs int
 	if started {
 		whiteUsername = g.white.username
 		blackUsername = g.black.username
+		whiteMs = int(g.whiteRemaining.Milliseconds())
+		blackMs = int(g.blackRemaining.Milliseconds())
 		notation := chess.AlgebraicNotation{}
 		positions := g.chess.Positions()
 		for i, m := range g.chess.Moves() {
@@ -438,15 +443,10 @@ func (h *Hub) handleSpectateGame(ctx context.Context, c *Client, payload shared.
 		})
 		c.Send(startMsg)
 		if len(moveList) > 0 {
-			type moveMsg struct {
-				GameID string   `json:"game_id"`
-				SAN    string   `json:"san"`
-				Moves  []string `json:"moves"`
-			}
-			moveData, _ := shared.Encode(shared.MsgMove, moveMsg{
+			moveData, _ := shared.Encode(shared.MsgMove, shared.MoveMsg{
 				GameID: payload.GameID,
-				SAN:    moveList[len(moveList)-1],
 				Moves:  moveList,
+				Clock:  shared.ClockState{WhiteMs: whiteMs, BlackMs: blackMs},
 			})
 			c.Send(moveData)
 		}
@@ -466,7 +466,7 @@ func (h *Hub) handleMove(ctx context.Context, c *Client, payload shared.Move) {
 		sendError(c, err.Error())
 		return
 	}
-	g.BroadcastMove(payload.SAN)
+	g.BroadcastMove()
 	if g.IsOver() {
 		h.mu.Lock()
 		_, stillExists := h.games[payload.GameID]

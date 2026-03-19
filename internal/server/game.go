@@ -6,29 +6,44 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
 )
 
+// ErrTimeExpired is returned by ApplyMove when the moving player's clock runs out.
+var ErrTimeExpired = errors.New("time expired")
+
 // Game tracks an active chess game in memory.
 type Game struct {
-	id          string
-	white       *Client
-	black       *Client
-	spectators  []*Client
-	chess       *chess.Game
-	mu          sync.Mutex
-	pendingUndo string // username who requested undo, or ""
+	id             string
+	white          *Client
+	black          *Client
+	spectators     []*Client
+	chess          *chess.Game
+	mu             sync.Mutex
+	pendingUndo    string // username who requested undo, or ""
+	timed          bool
+	whiteRemaining time.Duration
+	blackRemaining time.Duration
+	turnStartedAt  time.Time
+	increment      time.Duration
 }
 
-// NewGame creates a new game with the given white and black players.
-func NewGame(id string, white, black *Client) *Game {
+// NewGame creates a new game. initialSec==0 means untimed.
+func NewGame(id string, white, black *Client, initialSec, incrementSec int) *Game {
+	timed := initialSec > 0
+	initial := time.Duration(initialSec) * time.Second
 	return &Game{
-		id:    id,
-		white: white,
-		black: black,
-		chess: chess.NewGame(),
+		id:             id,
+		white:          white,
+		black:          black,
+		chess:          chess.NewGame(),
+		timed:          timed,
+		whiteRemaining: initial,
+		blackRemaining: initial,
+		increment:      time.Duration(incrementSec) * time.Second,
 	}
 }
 
@@ -45,7 +60,8 @@ func (g *Game) RemoveSpectator(c *Client) {
 }
 
 // ApplyMove validates and applies a move in SAN notation.
-// Returns an error if the move is invalid or it's not the player's turn.
+// Returns ErrTimeExpired if the moving player's clock has run out (timed games only).
+// Clock time is only deducted after the move is confirmed legal.
 func (g *Game) ApplyMove(c *Client, san string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -59,8 +75,31 @@ func (g *Game) ApplyMove(c *Client, san string) error {
 	if turn == chess.Black && c != g.black {
 		return errors.New("it is not your turn")
 	}
+	// Check time expiry before applying move (but don't mutate clock yet).
+	var elapsed time.Duration
+	if g.timed {
+		elapsed = time.Since(g.turnStartedAt)
+		if turn == chess.White && elapsed >= g.whiteRemaining {
+			return ErrTimeExpired
+		}
+		if turn == chess.Black && elapsed >= g.blackRemaining {
+			return ErrTimeExpired
+		}
+	}
+	// Validate move legality.
 	if err := g.chess.MoveStr(san); err != nil {
 		return fmt.Errorf("invalid move: %w", err)
+	}
+	// Move is legal: now deduct time and add increment.
+	if g.timed {
+		if turn == chess.White {
+			g.whiteRemaining -= elapsed
+			g.whiteRemaining += g.increment
+		} else {
+			g.blackRemaining -= elapsed
+			g.blackRemaining += g.increment
+		}
+		g.turnStartedAt = time.Now()
 	}
 	g.pendingUndo = ""
 	return nil
@@ -160,7 +199,7 @@ func (g *Game) broadcastLocked(msg []byte) {
 }
 
 // BroadcastMove sends the current board state to all participants after a move.
-func (g *Game) BroadcastMove(san string) {
+func (g *Game) BroadcastMove() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	notation := chess.AlgebraicNotation{}
@@ -170,17 +209,37 @@ func (g *Game) BroadcastMove(san string) {
 	for i, m := range moves {
 		moveList = append(moveList, notation.Encode(positions[i], m))
 	}
-	type moveMsg struct {
-		GameID string   `json:"game_id"`
-		SAN    string   `json:"san"`
-		Moves  []string `json:"moves"`
+	clock := shared.ClockState{
+		WhiteMs: int(g.whiteRemaining.Milliseconds()),
+		BlackMs: int(g.blackRemaining.Milliseconds()),
 	}
-	data, err := shared.Encode(shared.MsgMove, moveMsg{GameID: g.id, SAN: san, Moves: moveList})
+	data, err := shared.Encode(shared.MsgMove, shared.MoveMsg{
+		GameID: g.id,
+		Moves:  moveList,
+		Clock:  clock,
+	})
 	if err != nil {
 		slog.Error("failed to encode move broadcast", "error", err)
 		return
 	}
 	g.broadcastLocked(data)
+}
+
+// CurrentClockState returns the current clock state (for spectate catch-up).
+func (g *Game) CurrentClockState() shared.ClockState {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return shared.ClockState{
+		WhiteMs: int(g.whiteRemaining.Milliseconds()),
+		BlackMs: int(g.blackRemaining.Milliseconds()),
+	}
+}
+
+// Turn returns whose turn it currently is. Safe for concurrent use.
+func (g *Game) Turn() chess.Color {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.chess.Position().Turn()
 }
 
 // BroadcastUndoAccepted sends an undo_accepted message with the current move list.
