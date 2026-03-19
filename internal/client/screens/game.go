@@ -14,9 +14,31 @@ import (
 )
 
 var (
-	gameStatusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCC00"))
-	gameHelpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
+	gameStatusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCC00"))
+	gameHelpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
+	clockActiveStyle   = lipgloss.NewStyle().Bold(true).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#FFCC00")).Padding(0, 1)
+	clockInactiveStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#444444")).Padding(0, 1)
 )
+
+func formatMs(ms int) string {
+	if ms < 0 {
+		ms = 0
+	}
+	total := ms / 1000
+	h := total / 3600
+	min := (total % 3600) / 60
+	sec := total % 60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, min, sec)
+	}
+	return fmt.Sprintf("%02d:%02d", min, sec)
+}
+
+type clockTickMsg time.Time
+
+func clockTick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return clockTickMsg(t) })
+}
 
 // GameModel is the active game screen.
 type GameModel struct {
@@ -37,10 +59,14 @@ type GameModel struct {
 	pendingUndo       bool
 	pendingUndoPrompt bool
 	err               string
+	viewIdx           int
+	timed             bool
+	whiteMs           int
+	blackMs           int
 }
 
 // NewGameModel creates a new game screen.
-func NewGameModel(gameID, white, black string, myColor chess.Color, conn *websocket.Conn, username string) *GameModel {
+func NewGameModel(gameID, white, black string, myColor chess.Color, conn *websocket.Conn, username string, tc shared.TimeControl) *GameModel {
 	g := chess.NewGame()
 	flipped := myColor == chess.Black
 	return &GameModel{
@@ -54,6 +80,9 @@ func NewGameModel(gameID, white, black string, myColor chess.Color, conn *websoc
 		input:    NewLocalMoveInput(myColor == chess.Black),
 		conn:     conn,
 		username: username,
+		timed:    tc.InitialSeconds > 0,
+		whiteMs:  tc.InitialSeconds * 1000,
+		blackMs:  tc.InitialSeconds * 1000,
 	}
 }
 
@@ -96,6 +125,47 @@ func (m *GameModel) SetMoves(moves []string) {
 	}
 	idx := len(m.moves) - 1
 	m.moveList.SetMoves(m.moves, idx)
+	m.viewIdx = len(m.moves)
+}
+
+// SetMovesWithClock replaces the full move list and updates clock state from server.
+func (m *GameModel) SetMovesWithClock(moves []string, clock shared.ClockState) {
+	m.SetMoves(moves)
+	if m.timed {
+		m.whiteMs = clock.WhiteMs
+		m.blackMs = clock.BlackMs
+	}
+}
+
+// renderAtViewIdx updates the board display to show the position at viewIdx.
+func (m *GameModel) renderAtViewIdx() {
+	if m.viewIdx == len(m.moves) {
+		positions := m.chess.Positions()
+		moves := m.chess.Moves()
+		if len(moves) > 0 {
+			last := moves[len(moves)-1]
+			m.board.SetPosition(positions[len(positions)-1], last.S1(), last.S2())
+		} else {
+			m.board.SetPosition(m.chess.Position(), 0, 0)
+			m.board.ClearHighlight()
+		}
+		m.moveList.SetMoves(m.moves, len(m.moves)-1)
+		return
+	}
+	g := chess.NewGame()
+	for _, san := range m.moves[:m.viewIdx] {
+		_ = g.MoveStr(san)
+	}
+	positions := g.Positions()
+	moves := g.Moves()
+	if len(moves) > 0 {
+		last := moves[len(moves)-1]
+		m.board.SetPosition(positions[len(positions)-1], last.S1(), last.S2())
+	} else {
+		m.board.SetPosition(g.Position(), 0, 0)
+		m.board.ClearHighlight()
+	}
+	m.moveList.SetMoves(m.moves, m.viewIdx-1)
 }
 
 // SetGameOver marks the game as over and shows the result.
@@ -117,7 +187,11 @@ func (m *GameModel) ClearPendingUndo() {
 
 // Init implements tea.Model.
 func (m *GameModel) Init() tea.Cmd {
-	return m.input.Init()
+	cmds := []tea.Cmd{m.input.Init()}
+	if m.timed {
+		cmds = append(cmds, clockTick())
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update implements tea.Model.
@@ -189,6 +263,29 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if rows < 8 {
 				m.board.SetCellSize((rows+1)*2, rows+1)
 			}
+		case "left":
+			if m.viewIdx > 0 {
+				m.viewIdx--
+				m.renderAtViewIdx()
+			}
+		case "right":
+			if m.viewIdx < len(m.moves) {
+				m.viewIdx++
+				m.renderAtViewIdx()
+			}
+		}
+	case clockTickMsg:
+		if m.timed && !m.gameOver {
+			if m.chess.Position().Turn() == chess.White {
+				if m.whiteMs > 0 {
+					m.whiteMs -= 1000
+				}
+			} else {
+				if m.blackMs > 0 {
+					m.blackMs -= 1000
+				}
+			}
+			return m, clockTick()
 		}
 	case ErrMsg:
 		m.err = msg.Err.Error()
@@ -256,8 +353,35 @@ func (m *GameModel) View() string {
 	moveView := m.moveList.View()
 	left := boardView
 	right := lipgloss.NewStyle().Bold(true).Render("Moves") + "\n" + moveView
-	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right))
+	var columns []string
+	columns = append(columns, left, "  ", right)
+	if m.timed {
+		turn := m.chess.Position().Turn()
+		var blackStyle, whiteStyle lipgloss.Style
+		if turn == chess.Black {
+			blackStyle = clockActiveStyle
+			whiteStyle = clockInactiveStyle
+		} else {
+			blackStyle = clockInactiveStyle
+			whiteStyle = clockActiveStyle
+		}
+		blackClock := blackStyle.Render(formatMs(m.blackMs))
+		whiteClock := whiteStyle.Render(formatMs(m.whiteMs))
+		boardHeight := m.board.CellRows() * 8
+		spacerHeight := boardHeight - lipgloss.Height(blackClock) - lipgloss.Height(whiteClock)
+		if spacerHeight < 0 {
+			spacerHeight = 0
+		}
+		spacer := strings.Repeat("\n", spacerHeight)
+		clockCol := lipgloss.JoinVertical(lipgloss.Left, blackClock, spacer, whiteClock)
+		columns = append(columns, "  ", clockCol)
+	}
+	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, columns...))
 	sb.WriteString("\n")
+	if m.viewIdx < len(m.moves) {
+		sb.WriteString(gameStatusStyle.Render(fmt.Sprintf("Viewing move %d / %d  (\u2190 \u2192 to navigate)", m.viewIdx, len(m.moves))))
+		sb.WriteString("\n")
+	}
 	if m.myColor == chess.NoColor {
 		sb.WriteString(gameStatusStyle.Render("Spectating"))
 		sb.WriteString("\n")
@@ -290,11 +414,11 @@ func (m *GameModel) View() string {
 	var help string
 	switch {
 	case m.myColor == chess.NoColor:
-		help = "ctrl+e:export  esc:back to lobby"
+		help = "\u2190\u2192:navigate history  ctrl+e:export  esc:lobby"
 	case m.gameOver:
-		help = "ctrl+e:export  esc:back to lobby"
+		help = "\u2190\u2192:navigate history  ctrl+e:export  esc:lobby"
 	default:
-		help = "enter/click:move  u:undo  ctrl+r:resign  ctrl+e:export  [/]:resize  esc:lobby"
+		help = "enter/click:move  u:undo  ctrl+r:resign  ctrl+e:export  [/]:resize  \u2190\u2192:history  esc:lobby"
 	}
 	sb.WriteString(gameHelpStyle.Render(help))
 	sb.WriteString("\n")

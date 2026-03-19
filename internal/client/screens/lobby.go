@@ -71,7 +71,7 @@ func (m *LobbyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "n":
-			return m, m.createGame()
+			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenCreateGame} }
 		case "j", "down":
 			if m.cursor < len(m.games)-1 {
 				m.cursor++
@@ -97,19 +97,6 @@ func (m *LobbyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
-}
-
-func (m *LobbyModel) createGame() tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgCreateGame, shared.CreateGame{})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
 }
 
 func (m *LobbyModel) joinGame() tea.Cmd {
