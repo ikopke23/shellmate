@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -13,6 +14,8 @@ import (
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
 )
+
+type puzzleEngineResponseMsg struct{ uci string }
 
 type puzzleState int
 
@@ -37,6 +40,13 @@ type PuzzleAttemptMsg struct {
 	Err       error
 }
 
+// puzzleViewPos holds a board position and the last-move squares for display.
+type puzzleViewPos struct {
+	pos  *chess.Position
+	from chess.Square
+	to   chess.Square
+}
+
 // PuzzleModel is the puzzle mode screen.
 type PuzzleModel struct {
 	serverAddr       string
@@ -45,10 +55,14 @@ type PuzzleModel struct {
 	record           *shared.PuzzleRecord
 	game             *chess.Game
 	initialFEN       string
-	solution         []string // UCI move list; [0] already applied on load
-	solutionIdx      int      // next expected move index (starts at 1)
+	solution         []string // UCI move list; player plays [0] first
+	solutionIdx      int      // next expected move index (starts at 0)
 	board            *render.Board
+	moveList         *render.MoveList
 	input            *LocalMoveInput
+	enginePending    bool
+	contextHistory   []puzzleViewPos // pre-puzzle game positions; [0] = game start
+	viewIdx          int             // position being viewed; totalViewPositions() = live end
 	userPuzzleRating int
 	lastDelta        int
 	hasDelta         bool
@@ -63,6 +77,7 @@ func NewPuzzleModel(serverAddr, username string) *PuzzleModel {
 		username:   username,
 		state:      puzzleStateLoading,
 		board:      render.NewBoard(chess.NewGame().Position(), false),
+		moveList:   render.NewMoveList(14),
 	}
 }
 
@@ -79,7 +94,9 @@ func (m *PuzzleModel) SetPuzzle(record shared.PuzzleRecord) {
 	m.initGame()
 }
 
-// initGame creates a chess.Game from the stored FEN and applies moves[0].
+// initGame creates a chess.Game from the stored FEN. The FEN already encodes
+// the position after the opponent's last move, so solution[0] is the player's
+// first move — no setup move is applied here.
 func (m *PuzzleModel) initGame() {
 	fenOpt, err := chess.FEN(m.initialFEN)
 	if err != nil {
@@ -87,26 +104,17 @@ func (m *PuzzleModel) initGame() {
 		return
 	}
 	g := chess.NewGame(fenOpt)
-	if len(m.solution) > 0 {
-		uci := chess.UCINotation{}
-		move, err := uci.Decode(g.Position(), m.solution[0])
-		if err != nil {
-			m.err = fmt.Sprintf("apply setup move: %v", err)
-			return
-		}
-		if err := g.Move(move); err != nil {
-			m.err = fmt.Sprintf("game.Move setup: %v", err)
-			return
-		}
-		m.board.SetPosition(g.Position(), move.S1(), move.S2())
-	} else {
-		m.board.SetPosition(g.Position(), 0, 0)
-	}
+	m.board.SetPosition(g.Position(), 0, 0)
+	m.board.ClearHighlight()
 	m.game = g
-	m.solutionIdx = 1
+	m.solutionIdx = 0
+	m.enginePending = false
 	m.input = NewLocalMoveInput(false)
 	m.submitted = false
 	m.state = puzzleStatePlaying
+	m.buildContextHistory()
+	m.viewIdx = m.totalViewPositions()
+	m.updateMoveList()
 }
 
 // retry resets the puzzle to its initial playing state without recording an attempt.
@@ -114,12 +122,99 @@ func (m *PuzzleModel) retry() {
 	m.initGame()
 }
 
+// updateMoveList syncs the move list widget from the current game state.
+// Context moves (pre-puzzle game history) are shown dimmed; puzzle moves are highlighted.
+func (m *PuzzleModel) updateMoveList() {
+	if m.game == nil || m.moveList == nil {
+		return
+	}
+	var contextSANs []string
+	if m.record != nil && m.record.ContextMoves != "" {
+		contextSANs = strings.Fields(m.record.ContextMoves)
+	}
+	moves := m.game.Moves()
+	positions := m.game.Positions()
+	notation := chess.AlgebraicNotation{}
+	puzzleSANs := make([]string, len(moves))
+	for i, mv := range moves {
+		puzzleSANs[i] = notation.Encode(positions[i], mv)
+	}
+	all := append(contextSANs, puzzleSANs...)
+	// highlight the move that was applied to reach viewIdx (i.e. the one before it)
+	currentMoveIdx := m.viewIdx - 1
+	if len(all) == 0 {
+		currentMoveIdx = -1
+	}
+	m.moveList.SetMoves(all, currentMoveIdx)
+	m.moveList.SetBranchPoint(len(contextSANs))
+}
+
+// buildContextHistory replays record.ContextMoves from the standard starting position
+// and stores each position with its last-move squares for board display during navigation.
+func (m *PuzzleModel) buildContextHistory() {
+	m.contextHistory = []puzzleViewPos{{pos: chess.NewGame().Position()}}
+	if m.record == nil || m.record.ContextMoves == "" {
+		return
+	}
+	g := chess.NewGame()
+	notation := chess.AlgebraicNotation{}
+	for _, san := range strings.Fields(m.record.ContextMoves) {
+		pos := g.Position()
+		for _, mv := range g.ValidMoves() {
+			if notation.Encode(pos, mv) == san {
+				if err := g.Move(mv); err == nil {
+					m.contextHistory = append(m.contextHistory, puzzleViewPos{
+						pos:  g.Position(),
+						from: mv.S1(),
+						to:   mv.S2(),
+					})
+				}
+				break
+			}
+		}
+	}
+}
+
+// totalViewPositions returns the viewIdx corresponding to the live (latest) position.
+func (m *PuzzleModel) totalViewPositions() int {
+	ctxMoves := len(m.contextHistory) - 1
+	if m.game == nil {
+		return ctxMoves
+	}
+	return ctxMoves + len(m.game.Moves())
+}
+
+// syncBoardToView updates the board display to the position at m.viewIdx.
+func (m *PuzzleModel) syncBoardToView() {
+	if m.game == nil {
+		return
+	}
+	ctxMoves := len(m.contextHistory) - 1
+	if m.viewIdx <= ctxMoves {
+		h := m.contextHistory[m.viewIdx]
+		m.board.SetPosition(h.pos, h.from, h.to)
+		if m.viewIdx == 0 {
+			m.board.ClearHighlight()
+		}
+	} else {
+		puzzleIdx := m.viewIdx - ctxMoves
+		positions := m.game.Positions()
+		moves := m.game.Moves()
+		if puzzleIdx < len(positions) && puzzleIdx-1 < len(moves) {
+			mv := moves[puzzleIdx-1]
+			m.board.SetPosition(positions[puzzleIdx], mv.S1(), mv.S2())
+		}
+	}
+	m.updateMoveList()
+}
+
 // validateAndApply checks userSAN against the expected solution move.
-// If correct, applies the move (and any following opponent response).
-// Returns true on correct move.
-func (m *PuzzleModel) validateAndApply(userSAN string) bool {
+// If correct, applies the player's move and returns (true, engineUCI).
+// engineUCI is non-empty when the engine has a response queued.
+// Returns (false, "") on incorrect move.
+func (m *PuzzleModel) validateAndApply(userSAN string) (bool, string) {
 	if m.solutionIdx >= len(m.solution) || m.game == nil {
-		return false
+		return false, ""
 	}
 	expectedUCI := m.solution[m.solutionIdx]
 	algN := chess.AlgebraicNotation{}
@@ -131,45 +226,72 @@ func (m *PuzzleModel) validateAndApply(userSAN string) bool {
 			continue
 		}
 		if uciN.Encode(pos, mv) != expectedUCI {
-			// SAN is valid but not the expected move
 			m.state = puzzleStateFailure
-			return false
+			return false, ""
 		}
 		matchedMove = mv
 		break
 	}
 	if matchedMove == nil {
-		// invalid SAN or no valid match
 		m.state = puzzleStateFailure
-		return false
+		return false, ""
 	}
 	if err := m.game.Move(matchedMove); err != nil {
 		m.state = puzzleStateFailure
-		return false
+		return false, ""
 	}
 	m.board.SetPosition(m.game.Position(), matchedMove.S1(), matchedMove.S2())
 	m.solutionIdx++
-	// auto-apply opponent response if present
+	m.viewIdx = m.totalViewPositions()
+	m.updateMoveList()
 	if m.solutionIdx < len(m.solution) {
-		opUCI := m.solution[m.solutionIdx]
-		opPos := m.game.Position()
-		for _, opMv := range m.game.ValidMoves() {
-			if uciN.Encode(opPos, opMv) == opUCI {
-				if err := m.game.Move(opMv); err == nil {
-					m.board.SetPosition(m.game.Position(), opMv.S1(), opMv.S2())
-					m.solutionIdx++
-				}
-				break
-			}
-		}
-		if m.solutionIdx >= len(m.solution) {
-			m.state = puzzleStateSuccess
-		}
-		return true
+		return true, m.solution[m.solutionIdx]
 	}
-	// no more moves — puzzle complete
 	m.state = puzzleStateSuccess
-	return true
+	return true, ""
+}
+
+// applyEngineResponse applies the engine's queued response move.
+func (m *PuzzleModel) applyEngineResponse(uci string) {
+	if m.game == nil {
+		return
+	}
+	uciN := chess.UCINotation{}
+	pos := m.game.Position()
+	for _, opMv := range m.game.ValidMoves() {
+		if uciN.Encode(pos, opMv) == uci {
+			if err := m.game.Move(opMv); err == nil {
+				m.board.SetPosition(m.game.Position(), opMv.S1(), opMv.S2())
+				m.solutionIdx++
+				m.viewIdx = m.totalViewPositions()
+				m.updateMoveList()
+			}
+			break
+		}
+	}
+	m.enginePending = false
+	if m.solutionIdx >= len(m.solution) {
+		m.state = puzzleStateSuccess
+	}
+}
+
+// handleMoveInput processes a completed SAN move from the input widget.
+func (m *PuzzleModel) handleMoveInput(san string, inputCmd tea.Cmd) (tea.Model, tea.Cmd) {
+	correct, engineUCI := m.validateAndApply(san)
+	if !correct {
+		return m, tea.Batch(inputCmd, m.submitAttempt(false))
+	}
+	if m.state == puzzleStateSuccess {
+		return m, tea.Batch(inputCmd, m.submitAttempt(true))
+	}
+	if engineUCI != "" {
+		m.enginePending = true
+		delay := tea.Tick(400*time.Millisecond, func(_ time.Time) tea.Msg {
+			return puzzleEngineResponseMsg{uci: engineUCI}
+		})
+		return m, tea.Batch(inputCmd, delay)
+	}
+	return m, inputCmd
 }
 
 // Init implements tea.Model.
@@ -183,6 +305,12 @@ func (m *PuzzleModel) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m *PuzzleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case puzzleEngineResponseMsg:
+		m.applyEngineResponse(msg.uci)
+		if m.state == puzzleStateSuccess {
+			return m, m.submitAttempt(true)
+		}
+		return m, nil
 	case PuzzleAttemptMsg:
 		if msg.Err == nil {
 			delta := msg.NewRating - m.userPuzzleRating
@@ -221,31 +349,33 @@ func (m *PuzzleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.board.SetCellSize((rows+1)*2, rows+1)
 			}
 			return m, nil
+		case "left":
+			if m.state != puzzleStateLoading && !m.enginePending && m.viewIdx > 0 {
+				m.viewIdx--
+				m.syncBoardToView()
+			}
+			return m, nil
+		case "right":
+			if m.state != puzzleStateLoading && !m.enginePending {
+				if m.viewIdx < m.totalViewPositions() {
+					m.viewIdx++
+					m.syncBoardToView()
+				}
+			}
+			return m, nil
 		}
-		if m.state == puzzleStatePlaying && m.input != nil {
+		if m.state == puzzleStatePlaying && !m.enginePending && m.input != nil && m.viewIdx == m.totalViewPositions() {
 			san, _, cmd := m.input.HandleMsg(msg, m.board, m.game)
 			if san != "" {
-				correct := m.validateAndApply(san)
-				if correct && m.state == puzzleStateSuccess {
-					return m, tea.Batch(cmd, m.submitAttempt(true))
-				}
-				if !correct {
-					return m, tea.Batch(cmd, m.submitAttempt(false))
-				}
+				return m.handleMoveInput(san, cmd)
 			}
 			return m, cmd
 		}
 	case tea.MouseMsg:
-		if m.state == puzzleStatePlaying && m.input != nil {
+		if m.state == puzzleStatePlaying && !m.enginePending && m.input != nil && m.viewIdx == m.totalViewPositions() {
 			san, _, cmd := m.input.HandleMsg(msg, m.board, m.game)
 			if san != "" {
-				correct := m.validateAndApply(san)
-				if correct && m.state == puzzleStateSuccess {
-					return m, tea.Batch(cmd, m.submitAttempt(true))
-				}
-				if !correct {
-					return m, tea.Batch(cmd, m.submitAttempt(false))
-				}
+				return m.handleMoveInput(san, cmd)
 			}
 			return m, cmd
 		}
@@ -289,12 +419,30 @@ func (m *PuzzleModel) submitAttempt(solved bool) tea.Cmd {
 	}
 }
 
-// skipAndSubmit records the current puzzle as failed (if not yet attempted) then navigates to the next puzzle.
+// skipAndSubmit records the current puzzle as skipped then navigates to the next puzzle.
+// Navigation happens after the POST completes so the attempt is committed before the next
+// puzzle fetch, preventing the server from returning the same puzzle again.
 func (m *PuzzleModel) skipAndSubmit() tea.Cmd {
-	attemptCmd := m.submitAttempt(false)
-	return tea.Batch(attemptCmd, func() tea.Msg {
+	if m.record == nil || m.submitted {
+		return func() tea.Msg { return ScreenChangeMsg{Screen: ScreenPuzzle} }
+	}
+	m.submitted = true
+	id := m.record.ID
+	username := m.username
+	addr := m.serverAddr
+	return func() tea.Msg {
+		body, _ := json.Marshal(map[string]any{
+			"username":  username,
+			"puzzle_id": id,
+			"solved":    false,
+			"skipped":   true,
+		})
+		resp, err := http.Post("http://"+addr+"/puzzle/attempt", "application/json", bytes.NewReader(body))
+		if err == nil {
+			resp.Body.Close()
+		}
 		return ScreenChangeMsg{Screen: ScreenPuzzle}
-	})
+	}
 }
 
 // View implements tea.Model.
@@ -332,9 +480,9 @@ func (m *PuzzleModel) View() string {
 	var help string
 	switch m.state {
 	case puzzleStatePlaying:
-		help = "enter/click:move  [:smaller  ]:larger  n:skip  q:back"
+		help = "enter/click:move  ←→:navigate  [:smaller  ]:larger  n:skip  q:back"
 	default:
-		help = "r:retry  [:smaller  ]:larger  n:next  q:back"
+		help = "r:retry  ←→:navigate  [:smaller  ]:larger  n:next  q:back"
 	}
 	sb.WriteString(puzzleHelpStyle.Render(help))
 	sb.WriteString("\n")
@@ -366,5 +514,9 @@ func (m *PuzzleModel) rightPanel() string {
 		sb.WriteString(puzzleDimStyle.Render("Last change:    —"))
 		sb.WriteString("\n")
 	}
+	sb.WriteString("\n")
+	sb.WriteString(puzzleDimStyle.Render(strings.Repeat("─", 22)))
+	sb.WriteString("\n")
+	sb.WriteString(m.moveList.View())
 	return sb.String()
 }

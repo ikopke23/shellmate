@@ -1,0 +1,1 @@
+ALTER TABLE puzzles ADD COLUMN IF NOT EXISTS context_moves text NOT NULL DEFAULT '';

@@ -24,6 +24,7 @@ type puzzleAttemptRequest struct {
 	Username string `json:"username"`
 	PuzzleID string `json:"puzzle_id"`
 	Solved   bool   `json:"solved"`
+	Skipped  bool   `json:"skipped"`
 }
 
 // Handler holds the hub and upgrader for HTTP/WS handling.
@@ -160,7 +161,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "username and puzzle_id are required", http.StatusBadRequest)
 			return
 		}
-		newRating, err := h.hub.RecordPuzzleAttempt(r.Context(), req.Username, req.PuzzleID, req.Solved)
+		newRating, err := h.hub.RecordPuzzleAttempt(r.Context(), req.Username, req.PuzzleID, req.Solved, req.Skipped)
 		if err != nil {
 			slog.Error("failed to record puzzle attempt", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -192,6 +193,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ID:               puzzle.ID,
 			FEN:              puzzle.FEN,
 			Moves:            puzzle.Moves,
+			ContextMoves:     puzzle.ContextMoves,
 			Rating:           puzzle.Rating,
 			Themes:           puzzle.Themes,
 			GameURL:          puzzle.GameURL,

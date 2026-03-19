@@ -144,6 +144,7 @@ type PuzzleRecord struct {
 	ID               string   `json:"id"`
 	FEN              string   `json:"fen"`
 	Moves            string   `json:"moves"`
+	ContextMoves     string   `json:"context_moves"`
 	Rating           int      `json:"rating"`
 	Themes           []string `json:"themes"`
 	GameURL          string   `json:"game_url"`

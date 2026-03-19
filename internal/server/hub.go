@@ -140,8 +140,9 @@ func (h *Hub) GetPuzzleForUser(ctx context.Context, username string) (*PuzzleRow
 }
 
 // RecordPuzzleAttempt records the attempt and updates the user's puzzle rating atomically.
-// Returns the new puzzle rating.
-func (h *Hub) RecordPuzzleAttempt(ctx context.Context, username, puzzleID string, solved bool) (int, error) {
+// When skipped is true the rating is unchanged and the current rating is returned.
+// Returns the new (or unchanged) puzzle rating.
+func (h *Hub) RecordPuzzleAttempt(ctx context.Context, username, puzzleID string, solved, skipped bool) (int, error) {
 	puzzle, err := h.db.GetPuzzleByID(ctx, puzzleID)
 	if err != nil || puzzle == nil {
 		return 0, fmt.Errorf("puzzle not found: %s", puzzleID)
@@ -150,8 +151,11 @@ func (h *Hub) RecordPuzzleAttempt(ctx context.Context, username, puzzleID string
 	if err != nil {
 		return 0, err
 	}
-	newRating := PuzzleEloOutcome(currentRating, puzzle.Rating, solved)
-	if err := h.db.RecordAttemptAndUpdateRating(ctx, username, puzzleID, solved, newRating); err != nil {
+	newRating := currentRating
+	if !skipped {
+		newRating = PuzzleEloOutcome(currentRating, puzzle.Rating, solved)
+	}
+	if err := h.db.RecordAttemptAndUpdateRating(ctx, username, puzzleID, solved, skipped, newRating); err != nil {
 		return 0, err
 	}
 	return newRating, nil

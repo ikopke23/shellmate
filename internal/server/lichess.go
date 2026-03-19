@@ -11,7 +11,7 @@ import (
 	"github.com/notnil/chess"
 )
 
-const lichessDailyURL = "https://lichess.org/api/puzzle/daily"
+const lichessNextURL = "https://lichess.org/api/puzzle/next"
 
 var lichessClient = &http.Client{Timeout: 10 * time.Second}
 
@@ -37,24 +37,36 @@ type lichessPuzzleResponse struct {
 	Game   lichessGameData   `json:"game"`
 }
 
-// fenAtPly replays pgnText to the given half-move ply index and returns the position FEN.
-// positions[0] is the start position; positions[n] is after n half-moves.
-func fenAtPly(pgnText string, ply int) (string, error) {
-	pgnOpt, err := chess.PGN(strings.NewReader(pgnText))
-	if err != nil {
-		return "", fmt.Errorf("parse pgn: %w", err)
+// parseGameAt parses pgnText and returns the FEN at the given ply and the SAN moves
+// leading up to it (indices 0..ply-1). positions[0] is the start; positions[n] is after n half-moves.
+func parseGameAt(pgnText string, ply int) (fen string, contextSANs []string, err error) {
+	pgnOpt, parseErr := chess.PGN(strings.NewReader(pgnText))
+	if parseErr != nil {
+		return "", nil, fmt.Errorf("parse pgn: %w", parseErr)
 	}
 	g := chess.NewGame(pgnOpt)
 	positions := g.Positions()
+	moves := g.Moves()
 	if ply < 0 || ply >= len(positions) {
-		return "", fmt.Errorf("ply %d out of range (0..%d)", ply, len(positions)-1)
+		return "", nil, fmt.Errorf("ply %d out of range (0..%d)", ply, len(positions)-1)
 	}
-	return positions[ply].String(), nil
+	fen = positions[ply].String()
+	notation := chess.AlgebraicNotation{}
+	for i := 0; i < ply && i < len(moves); i++ {
+		contextSANs = append(contextSANs, notation.Encode(positions[i], moves[i]))
+	}
+	return fen, contextSANs, nil
 }
 
-// fetchDailyPuzzle retrieves today's puzzle from the Lichess public API.
+// fenAtPly replays pgnText to the given half-move ply index and returns the position FEN.
+func fenAtPly(pgnText string, ply int) (string, error) {
+	fen, _, err := parseGameAt(pgnText, ply)
+	return fen, err
+}
+
+// fetchDailyPuzzle retrieves a random puzzle from the Lichess public API.
 func fetchDailyPuzzle(ctx context.Context) (*lichessPuzzleResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, lichessDailyURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, lichessNextURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -75,11 +87,13 @@ func fetchDailyPuzzle(ctx context.Context) (*lichessPuzzleResponse, error) {
 }
 
 // toPuzzleRow converts a Lichess API response to a PuzzleRow ready for storage.
-// FEN is derived server-side from the game PGN at initialPly-1:
-// Lichess's initialPly is the ply index of solution[0] in the game, so the
-// position FROM WHICH solution[0] will be applied is positions[initialPly-1].
+// FEN is derived server-side from the game PGN at initialPly+1:
+// Lichess's initialPly is the number of half-moves before the opponent's last forcing move.
+// The PGN includes that move, so positions[initialPly+1] is the position from which
+// solution[0] (the solver's first move) is valid.
+// ContextMoves holds the SAN moves for all initialPly+1 moves (for display in the client sidebar).
 func toPuzzleRow(resp *lichessPuzzleResponse) (*PuzzleRow, error) {
-	fen, err := fenAtPly(resp.Game.PGN, resp.Puzzle.InitialPly-1)
+	fen, contextSANs, err := parseGameAt(resp.Game.PGN, resp.Puzzle.InitialPly+1)
 	if err != nil {
 		return nil, fmt.Errorf("derive fen: %w", err)
 	}
@@ -96,16 +110,17 @@ func toPuzzleRow(resp *lichessPuzzleResponse) (*PuzzleRow, error) {
 		openingTags = []string{}
 	}
 	return &PuzzleRow{
-		ID:          resp.Puzzle.ID,
-		FEN:         fen,
-		Moves:       strings.Join(resp.Puzzle.Solution, " "),
-		Rating:      resp.Puzzle.Rating,
-		RatingDev:   resp.Puzzle.RatingDeviation,
-		Popularity:  resp.Puzzle.Popularity,
-		NbPlays:     resp.Puzzle.NbPlays,
-		Themes:      themes,
-		GameURL:     gameURL,
-		OpeningTags: openingTags,
-		PuzzleDate:  time.Now().UTC().Truncate(24 * time.Hour),
+		ID:           resp.Puzzle.ID,
+		FEN:          fen,
+		Moves:        strings.Join(resp.Puzzle.Solution, " "),
+		ContextMoves: strings.Join(contextSANs, " "),
+		Rating:       resp.Puzzle.Rating,
+		RatingDev:    resp.Puzzle.RatingDeviation,
+		Popularity:   resp.Puzzle.Popularity,
+		NbPlays:      resp.Puzzle.NbPlays,
+		Themes:       themes,
+		GameURL:      gameURL,
+		OpeningTags:  openingTags,
+		PuzzleDate:   time.Now().UTC().Truncate(24 * time.Hour),
 	}, nil
 }

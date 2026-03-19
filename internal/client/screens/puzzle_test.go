@@ -8,15 +8,15 @@ import (
 )
 
 // setupPuzzleModel builds a PuzzleModel already past the loading state using a real
-// chess position and a two-move solution sequence (one opponent move + one user move).
-// Position: standard opening after 1.e4 e5 2.Nf3 (ply 3).
-// The FEN at that point is the starting point. moves[0] = "e2e4" (auto-played), moves[1] = "d7d5" (user's move).
+// chess position. The FEN is the position after 1.e4 (black to move). solution[0] is
+// "d7d5" — the player's (black's) move. No engine response follows, so the puzzle
+// completes in one player move.
 func setupPuzzleModel(t *testing.T) *PuzzleModel {
 	t.Helper()
 	record := shared.PuzzleRecord{
 		ID:               "test1",
-		FEN:              "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-		Moves:            "e2e4 d7d5",
+		FEN:              "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+		Moves:            "d7d5",
 		Rating:           1500,
 		Themes:           []string{"opening"},
 		UserPuzzleRating: 1500,
@@ -26,19 +26,20 @@ func setupPuzzleModel(t *testing.T) *PuzzleModel {
 	return m
 }
 
-func TestPuzzleModelInitAppliesFirstMove(t *testing.T) {
+func TestPuzzleModelInitLoadsPosition(t *testing.T) {
 	m := setupPuzzleModel(t)
-	// After SetPuzzle, moves[0] (e2e4) should be applied.
-	// The board position should not be the starting position.
+	// FEN already has e4 played — e4 should have a pawn, e2 should be empty.
 	pos := m.game.Position()
-	// e4 pawn should be at e4 (square index 28), not e2.
 	if pos.Board().Piece(chess.E4) == chess.NoPiece {
-		t.Error("expected pawn on e4 after moves[0] applied, got empty square")
+		t.Error("expected pawn on e4 from FEN, got empty square")
 	}
 	if pos.Board().Piece(chess.E2) != chess.NoPiece {
-		t.Error("expected e2 to be empty after moves[0] applied")
+		t.Error("expected e2 to be empty (pawn already on e4)")
 	}
-	// state should be playing
+	// solutionIdx should be 0 — player plays solution[0] next
+	if m.solutionIdx != 0 {
+		t.Errorf("solutionIdx = %d, want 0", m.solutionIdx)
+	}
 	if m.state != puzzleStatePlaying {
 		t.Errorf("state = %v, want puzzleStatePlaying", m.state)
 	}
@@ -46,12 +47,12 @@ func TestPuzzleModelInitAppliesFirstMove(t *testing.T) {
 
 func TestPuzzleValidateCorrectMove(t *testing.T) {
 	m := setupPuzzleModel(t)
-	// solution[1] is "d7d5" which in SAN is "d5"
-	ok := m.validateAndApply("d5")
+	// solution[0] is "d7d5" which in SAN is "d5"
+	ok, _ := m.validateAndApply("d5")
 	if !ok {
 		t.Error("validateAndApply returned false for correct move d5")
 	}
-	// After correct move + no further opponent moves, should be success
+	// Single-move solution with no engine response — should be success
 	if m.state != puzzleStateSuccess {
 		t.Errorf("state = %v, want puzzleStateSuccess", m.state)
 	}
@@ -59,7 +60,8 @@ func TestPuzzleValidateCorrectMove(t *testing.T) {
 
 func TestPuzzleValidateWrongMove(t *testing.T) {
 	m := setupPuzzleModel(t)
-	ok := m.validateAndApply("e5")
+	// "e5" is a valid chess move for black but not the expected solution move
+	ok, _ := m.validateAndApply("e5")
 	if ok {
 		t.Error("validateAndApply returned true for wrong move e5")
 	}
@@ -70,7 +72,7 @@ func TestPuzzleValidateWrongMove(t *testing.T) {
 
 func TestPuzzleValidateInvalidSAN(t *testing.T) {
 	m := setupPuzzleModel(t)
-	ok := m.validateAndApply("zz9")
+	ok, _ := m.validateAndApply("zz9")
 	if ok {
 		t.Error("validateAndApply returned true for invalid SAN")
 	}
@@ -86,10 +88,10 @@ func TestPuzzleRetryResetsToPlaying(t *testing.T) {
 	if m.state != puzzleStatePlaying {
 		t.Errorf("after retry state = %v, want puzzleStatePlaying", m.state)
 	}
-	// moves[0] should be re-applied: e4 pawn should be on e4
+	// FEN position should be restored — e4 should still have a pawn
 	pos := m.game.Position()
 	if pos.Board().Piece(chess.E4) == chess.NoPiece {
-		t.Error("after retry, e4 should still have a pawn")
+		t.Error("after retry, e4 should still have a pawn (restored from FEN)")
 	}
 }
 
