@@ -34,6 +34,7 @@ type Model struct {
 	importScreen  *screens.ImportModel
 	importedGames *screens.ImportedGamesModel
 	puzzle        *screens.PuzzleModel
+	createGame    *screens.CreateGameModel
 	width         int
 	height        int
 }
@@ -99,6 +100,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.puzzle.SetPuzzle(msg.record)
 		}
 		return m, nil
+	case screens.CreateGameMsg:
+		return m, m.sendCreateGame(msg.TimeControl)
 	case screens.ErrMsg:
 		// pass through to active screen
 	}
@@ -161,6 +164,12 @@ func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.puzzle = pm
 		}
 		return m, cmd
+	case screens.ScreenCreateGame:
+		updated, cmd := m.createGame.Update(msg)
+		if cgm, ok := updated.(*screens.CreateGameModel); ok {
+			m.createGame = cgm
+		}
+		return m, cmd
 	}
 	return m, nil
 }
@@ -217,6 +226,9 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 	case screens.ScreenGame:
 		// game screen is set up by game_start messages
 		m.screen = screens.ScreenGame
+	case screens.ScreenCreateGame:
+		m.createGame = screens.NewCreateGameModel()
+		m.screen = screens.ScreenCreateGame
 	}
 	return m, nil
 }
@@ -235,15 +247,11 @@ func (m Model) handleWSMsg(msg screens.WSMsg) (tea.Model, tea.Cmd) {
 			return m, m.listenWS()
 		}
 		m.startGameFromMsg(payload)
-		return m, m.listenWS()
+		return m, tea.Batch(m.listenWS(), m.game.Init())
 	case shared.MsgMove:
-		var payload struct {
-			GameID string   `json:"game_id"`
-			SAN    string   `json:"san"`
-			Moves  []string `json:"moves"`
-		}
+		var payload shared.MoveMsg
 		if err := json.Unmarshal(env.Payload, &payload); err == nil && m.game != nil {
-			m.game.SetMoves(payload.Moves)
+			m.game.SetMovesWithClock(payload.Moves, payload.Clock)
 			if m.screen != screens.ScreenGame {
 				m.screen = screens.ScreenGame
 			}
@@ -334,6 +342,10 @@ func (m Model) View() string {
 		if m.puzzle != nil {
 			return m.puzzle.View()
 		}
+	case screens.ScreenCreateGame:
+		if m.createGame != nil {
+			return m.createGame.View()
+		}
 	}
 	return ""
 }
@@ -409,6 +421,19 @@ func (m *Model) fetchPuzzle() tea.Cmd {
 	}
 }
 
+func (m *Model) sendCreateGame(tc shared.TimeControl) tea.Cmd {
+	return func() tea.Msg {
+		data, err := shared.Encode(shared.MsgCreateGame, shared.CreateGame{TimeControl: tc})
+		if err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		return nil
+	}
+}
+
 // startGameFromMsg creates a new GameModel when the server notifies of a game start.
 func (m *Model) startGameFromMsg(payload shared.GameStart) {
 	var myColor chess.Color
@@ -420,6 +445,6 @@ func (m *Model) startGameFromMsg(payload shared.GameStart) {
 	default:
 		myColor = chess.NoColor
 	}
-	m.game = screens.NewGameModel(payload.GameID, payload.White, payload.Black, myColor, m.conn, m.username)
+	m.game = screens.NewGameModel(payload.GameID, payload.White, payload.Black, myColor, m.conn, m.username, payload.TimeControl)
 	m.screen = screens.ScreenGame
 }

@@ -18,6 +18,7 @@ const (
 	ScreenImport
 	ScreenImportedGames
 	ScreenPuzzle
+	ScreenCreateGame
 )
 
 // ConnectedMsg is sent when WebSocket connection is established.
