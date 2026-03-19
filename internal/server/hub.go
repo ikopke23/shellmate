@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -281,7 +282,12 @@ func (h *Hub) Route(ctx context.Context, c *Client, env shared.Envelope) {
 		// Already connected; re-send lobby state.
 		h.sendLobbyTo(ctx, c)
 	case shared.MsgCreateGame:
-		h.handleCreateGame(ctx, c)
+		var payload shared.CreateGame
+		if err := json.Unmarshal(env.Payload, &payload); err != nil {
+			sendError(c, "invalid create_game payload")
+			return
+		}
+		h.handleCreateGame(ctx, c, payload)
 	case shared.MsgJoinGame:
 		var payload shared.JoinGame
 		if err := json.Unmarshal(env.Payload, &payload); err != nil {
@@ -329,11 +335,11 @@ func (h *Hub) Route(ctx context.Context, c *Client, env shared.Envelope) {
 	}
 }
 
-func (h *Hub) handleCreateGame(ctx context.Context, c *Client) {
+func (h *Hub) handleCreateGame(ctx context.Context, c *Client, payload shared.CreateGame) {
 	id := generateID()
+	tc := payload.TimeControl
 	h.mu.Lock()
-	// TODO(Task 3): unmarshal shared.CreateGame payload and pass TimeControl to NewGame.
-	g := NewGame(id, c, nil, 0, 0)
+	g := NewGame(id, c, nil, tc.InitialSeconds, tc.IncrementSeconds)
 	h.games[id] = g
 	c.game = id
 	h.mu.Unlock()
@@ -366,15 +372,20 @@ func (h *Hub) handleJoinGame(ctx context.Context, c *Client, payload shared.Join
 	c.game = payload.GameID
 	g.turnStartedAt = time.Now()
 	whiteUsername := g.white.username
+	timeControl := shared.TimeControl{
+		InitialSeconds:   int(g.whiteRemaining / time.Second),
+		IncrementSeconds: int(g.increment / time.Second),
+	}
 	g.mu.Unlock()
 	h.mu.Unlock()
 	slog.Info("player joined game", "game_id", payload.GameID, "black", c.username)
 	go h.closeOpenGamesForUsers(ctx, whiteUsername, c.username, payload.GameID)
 	// notify both players the game has started
 	startMsg, _ := shared.Encode(shared.MsgGameStart, shared.GameStart{
-		GameID: payload.GameID,
-		White:  whiteUsername,
-		Black:  c.username,
+		GameID:      payload.GameID,
+		White:       whiteUsername,
+		Black:       c.username,
+		TimeControl: timeControl,
 	})
 	g.Broadcast(startMsg)
 	h.BroadcastLobby(ctx)
@@ -422,11 +433,16 @@ func (h *Hub) handleSpectateGame(ctx context.Context, c *Client, payload shared.
 	var whiteUsername, blackUsername string
 	var moveList []string
 	var whiteMs, blackMs int
+	var timeControl shared.TimeControl
 	if started {
 		whiteUsername = g.white.username
 		blackUsername = g.black.username
 		whiteMs = int(g.whiteRemaining.Milliseconds())
 		blackMs = int(g.blackRemaining.Milliseconds())
+		timeControl = shared.TimeControl{
+			InitialSeconds:   int(g.whiteRemaining / time.Second),
+			IncrementSeconds: int(g.increment / time.Second),
+		}
 		notation := chess.AlgebraicNotation{}
 		positions := g.chess.Positions()
 		for i, m := range g.chess.Moves() {
@@ -437,9 +453,10 @@ func (h *Hub) handleSpectateGame(ctx context.Context, c *Client, payload shared.
 	slog.Info("spectator joined game", "game_id", payload.GameID, "spectator", c.username)
 	if started {
 		startMsg, _ := shared.Encode(shared.MsgGameStart, shared.GameStart{
-			GameID: payload.GameID,
-			White:  whiteUsername,
-			Black:  blackUsername,
+			GameID:      payload.GameID,
+			White:       whiteUsername,
+			Black:       blackUsername,
+			TimeControl: timeControl,
 		})
 		c.Send(startMsg)
 		if len(moveList) > 0 {
@@ -463,6 +480,19 @@ func (h *Hub) handleMove(ctx context.Context, c *Client, payload shared.Move) {
 		return
 	}
 	if err := g.ApplyMove(c, payload.SAN); err != nil {
+		if errors.Is(err, ErrTimeExpired) {
+			h.mu.Lock()
+			_, stillExists := h.games[payload.GameID]
+			if stillExists {
+				delete(h.games, payload.GameID)
+			}
+			h.mu.Unlock()
+			if stillExists {
+				g.handleGameOver(ctx, h)
+				h.BroadcastLobby(ctx)
+			}
+			return
+		}
 		sendError(c, err.Error())
 		return
 	}

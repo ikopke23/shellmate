@@ -80,9 +80,11 @@ func (g *Game) ApplyMove(c *Client, san string) error {
 	if g.timed {
 		elapsed = time.Since(g.turnStartedAt)
 		if turn == chess.White && elapsed >= g.whiteRemaining {
+			g.chess.Resign(chess.White)
 			return ErrTimeExpired
 		}
 		if turn == chess.Black && elapsed >= g.blackRemaining {
+			g.chess.Resign(chess.Black)
 			return ErrTimeExpired
 		}
 	}

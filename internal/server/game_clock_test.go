@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/notnil/chess"
 )
 
 func makeTimedGame(initialSec, incrementSec int) *Game {
@@ -44,6 +46,9 @@ func TestApplyMove_TimeExpired(t *testing.T) {
 	err := g.ApplyMove(g.white, "e4")
 	if !errors.Is(err, ErrTimeExpired) {
 		t.Fatalf("expected ErrTimeExpired, got %v", err)
+	}
+	if g.chess.Outcome() == chess.NoOutcome {
+		t.Fatal("expected game to be marked over after time expiry")
 	}
 }
 
