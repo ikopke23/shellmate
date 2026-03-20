@@ -86,14 +86,17 @@ func (h *Hub) GetImportedGames(ctx context.Context) ([]HistoryRecord, error) {
 // If the unseen count after serving drops below 3, a background goroutine prefetches today's puzzle.
 func (h *Hub) GetPuzzleForUser(ctx context.Context, username string) (*PuzzleRow, int, error) {
 	slog.Info("getting puzzle for user", "username", username)
-	puzzle, err := h.db.GetNextPuzzle(ctx, username)
+	userRating, err := h.db.GetPuzzleRating(ctx, username)
+	if err != nil {
+		return nil, 0, err
+	}
+	puzzle, err := h.db.GetNextPuzzle(ctx, username, userRating)
 	if err != nil {
 		slog.Error("GetNextPuzzle failed", "username", username, "error", err)
 		return nil, 0, err
 	}
 	if puzzle == nil {
 		slog.Info("no cached puzzle found, fetching from lichess", "username", username)
-		// no unseen puzzles — fetch today's from Lichess
 		resp, err := fetchDailyPuzzle(ctx)
 		if err != nil {
 			slog.Error("lichess fetch failed", "username", username, "error", err)
@@ -133,11 +136,7 @@ func (h *Hub) GetPuzzleForUser(ctx context.Context, username string) (*PuzzleRow
 			slog.Warn("background puzzle save failed", "error", err)
 		}
 	}()
-	rating, err := h.db.GetPuzzleRating(ctx, username)
-	if err != nil {
-		return nil, 0, err
-	}
-	return puzzle, rating, nil
+	return puzzle, userRating, nil
 }
 
 // RecordPuzzleAttempt records the attempt and updates the user's puzzle rating atomically.

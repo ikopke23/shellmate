@@ -255,16 +255,37 @@ func (d *DB) SavePuzzle(ctx context.Context, p PuzzleRow) error {
 	return err
 }
 
-// GetNextPuzzle returns an unseen puzzle for the user, or nil if none are cached.
-func (d *DB) GetNextPuzzle(ctx context.Context, username string) (*PuzzleRow, error) {
+// GetNextPuzzle returns an unseen puzzle for the user matched to their rating.
+// Stage 1: tries puzzles within ±200 Elo of userRating, closest first.
+// Stage 2: falls back to any unseen puzzle if the band is empty.
+// Returns nil, nil if no unseen puzzles exist.
+func (d *DB) GetNextPuzzle(ctx context.Context, username string, userRating int) (*PuzzleRow, error) {
 	p := &PuzzleRow{}
 	err := d.pool.QueryRow(ctx,
 		`SELECT id, fen, moves, context_moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date
 		 FROM puzzles
 		 WHERE id NOT IN (SELECT puzzle_id FROM user_puzzle_attempts WHERE username = $1)
-		 ORDER BY fetched_at ASC
+		   AND rating BETWEEN $2 - 200 AND $2 + 200
+		 ORDER BY ABS(rating - $2) ASC
 		 LIMIT 1`,
-		username,
+		username, userRating,
+	).Scan(&p.ID, &p.FEN, &p.Moves, &p.ContextMoves, &p.Rating, &p.RatingDev, &p.Popularity, &p.NbPlays,
+		&p.Themes, &p.GameURL, &p.OpeningTags, &p.PuzzleDate)
+	if err == nil {
+		return p, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	// Stage 2: any unseen puzzle
+	p = &PuzzleRow{}
+	err = d.pool.QueryRow(ctx,
+		`SELECT id, fen, moves, context_moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date
+		 FROM puzzles
+		 WHERE id NOT IN (SELECT puzzle_id FROM user_puzzle_attempts WHERE username = $1)
+		 ORDER BY ABS(rating - $2) ASC
+		 LIMIT 1`,
+		username, userRating,
 	).Scan(&p.ID, &p.FEN, &p.Moves, &p.ContextMoves, &p.Rating, &p.RatingDev, &p.Popularity, &p.NbPlays,
 		&p.Themes, &p.GameURL, &p.OpeningTags, &p.PuzzleDate)
 	if errors.Is(err, pgx.ErrNoRows) {
