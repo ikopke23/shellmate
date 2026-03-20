@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,11 +16,37 @@ import (
 )
 
 func main() {
+	importPath := flag.String("import-puzzles", "", "path to Lichess puzzle CSV to import (server will not start)")
+	flag.Parse()
+
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		slog.Error("DATABASE_URL environment variable is required")
 		os.Exit(1)
 	}
+	migrationSQL, err := readMigrations()
+	if err != nil {
+		slog.Error("failed to read migration file", "error", err)
+		os.Exit(1)
+	}
+
+	if *importPath != "" {
+		ctx := context.Background()
+		importDB, importErr := server.NewDB(ctx, dbURL, migrationSQL)
+		if importErr != nil {
+			slog.Error("failed to connect to database", "error", importErr)
+			os.Exit(1)
+		}
+		slog.Info("starting puzzle import", "path", *importPath)
+		processed, inserted, skipped, importErr := server.RunImport(ctx, importDB, *importPath)
+		if importErr != nil {
+			slog.Error("import failed", "error", importErr)
+			os.Exit(1)
+		}
+		slog.Info("import complete", "processed", processed, "inserted", inserted, "skipped", skipped)
+		return
+	}
+
 	inviteCode := os.Getenv("INVITE_CODE")
 	if inviteCode == "" {
 		slog.Error("INVITE_CODE environment variable is required")
@@ -28,11 +55,6 @@ func main() {
 	listenAddr := os.Getenv("LISTEN_ADDR")
 	if listenAddr == "" {
 		listenAddr = ":8080"
-	}
-	migrationSQL, err := readMigrations()
-	if err != nil {
-		slog.Error("failed to read migration file", "error", err)
-		os.Exit(1)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
