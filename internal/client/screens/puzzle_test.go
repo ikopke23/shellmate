@@ -156,3 +156,32 @@ func TestEngineResponseCompletesOnLastMove(t *testing.T) {
 		t.Fatalf("state = %v, want puzzleStateSuccess", m.state)
 	}
 }
+
+func TestInitGameFlipsForBlack(t *testing.T) {
+	// The existing setupPuzzleModel uses a black-to-move FEN
+	m := setupPuzzleModel(t)
+	if !m.board.Flipped() {
+		t.Error("board should be flipped for black-to-move puzzle")
+	}
+	if !m.input.flipped {
+		t.Error("input should be flipped for black-to-move puzzle")
+	}
+}
+
+func TestInitGameNoFlipForWhite(t *testing.T) {
+	record := shared.PuzzleRecord{
+		ID:               "white1",
+		FEN:              "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3",
+		Moves:            "f3e5",
+		Rating:           1500,
+		UserPuzzleRating: 1500,
+	}
+	m := NewPuzzleModel("localhost:8080", "testuser")
+	m.SetPuzzle(record)
+	if m.board.Flipped() {
+		t.Error("board should NOT be flipped for white-to-move puzzle")
+	}
+	if m.input.flipped {
+		t.Error("input should NOT be flipped for white-to-move puzzle")
+	}
+}

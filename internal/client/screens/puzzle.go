@@ -104,12 +104,14 @@ func (m *PuzzleModel) initGame() {
 		return
 	}
 	g := chess.NewGame(fenOpt)
+	flipped := g.Position().Turn() == chess.Black
+	m.board.SetFlipped(flipped)
 	m.board.SetPosition(g.Position(), 0, 0)
 	m.board.ClearHighlight()
 	m.game = g
 	m.solutionIdx = 0
 	m.enginePending = false
-	m.input = NewLocalMoveInput(false)
+	m.input = NewLocalMoveInput(flipped)
 	m.submitted = false
 	m.state = puzzleStatePlaying
 	m.buildContextHistory()
