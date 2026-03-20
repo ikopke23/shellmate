@@ -342,3 +342,29 @@ func (d *DB) GetPuzzleByID(ctx context.Context, id string) (*PuzzleRow, error) {
 	}
 	return p, nil
 }
+
+// BulkSavePuzzles inserts a batch of puzzles in a single multi-row INSERT.
+// ON CONFLICT (id) DO NOTHING makes it safe to re-run imports.
+func (d *DB) BulkSavePuzzles(ctx context.Context, puzzles []PuzzleRow) error {
+	if len(puzzles) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for _, p := range puzzles {
+		batch.Queue(
+			`INSERT INTO puzzles (id, fen, moves, context_moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			 ON CONFLICT (id) DO NOTHING`,
+			p.ID, p.FEN, p.Moves, p.ContextMoves, p.Rating, p.RatingDev, p.Popularity, p.NbPlays,
+			p.Themes, p.GameURL, p.OpeningTags, p.PuzzleDate,
+		)
+	}
+	br := d.pool.SendBatch(ctx, batch)
+	defer br.Close() //nolint:errcheck
+	for range puzzles {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
