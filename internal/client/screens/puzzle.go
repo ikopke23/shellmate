@@ -256,15 +256,14 @@ func (m *PuzzleModel) applyEngineResponse(uci string) {
 	if m.game == nil {
 		return
 	}
+	defer func() { m.enginePending = false }()
 	pos := m.game.Position()
 	mv, err := chess.UCINotation{}.Decode(pos, uci)
 	if err != nil {
-		m.enginePending = false
 		m.state = puzzleStateFailure
 		return
 	}
 	if err := m.game.Move(mv); err != nil {
-		m.enginePending = false
 		m.state = puzzleStateFailure
 		return
 	}
@@ -272,7 +271,6 @@ func (m *PuzzleModel) applyEngineResponse(uci string) {
 	m.solutionIdx++
 	m.viewIdx = m.totalViewPositions()
 	m.updateMoveList()
-	m.enginePending = false
 	if m.solutionIdx >= len(m.solution) {
 		m.state = puzzleStateSuccess
 	}
