@@ -24,6 +24,7 @@ const (
 	puzzleStatePlaying
 	puzzleStateSuccess
 	puzzleStateFailure
+	puzzleStateSolution
 )
 
 var (
@@ -122,6 +123,32 @@ func (m *PuzzleModel) initGame() {
 // retry resets the puzzle to its initial playing state without recording an attempt.
 func (m *PuzzleModel) retry() {
 	m.initGame()
+}
+
+// showSolution resets the game to the puzzle FEN, applies all solution moves, and sets
+// viewIdx to the puzzle start so the user can step through with arrow keys.
+func (m *PuzzleModel) showSolution() {
+	fenOpt, err := chess.FEN(m.initialFEN)
+	if err != nil {
+		return
+	}
+	g := chess.NewGame(fenOpt)
+	m.game = g
+	uciN := chess.UCINotation{}
+	for _, uci := range m.solution {
+		pos := m.game.Position()
+		mv, err := uciN.Decode(pos, uci)
+		if err != nil {
+			break
+		}
+		if err := m.game.Move(mv); err != nil {
+			break
+		}
+	}
+	ctxMoves := len(m.contextHistory) - 1
+	m.viewIdx = ctxMoves
+	m.syncBoardToView()
+	m.state = puzzleStateSolution
 }
 
 // updateMoveList syncs the move list widget from the current game state.
@@ -329,15 +356,20 @@ func (m *PuzzleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "r":
-			if m.state == puzzleStateFailure || m.state == puzzleStateSuccess {
+			if m.state == puzzleStateFailure || m.state == puzzleStateSuccess || m.state == puzzleStateSolution {
 				m.retry()
 			}
 			return m, m.initCmd()
+		case "s":
+			if m.state == puzzleStateFailure {
+				m.showSolution()
+			}
+			return m, nil
 		case "n":
 			if m.state == puzzleStatePlaying || m.state == puzzleStateFailure {
 				return m, m.skipAndSubmit()
 			}
-			if m.state == puzzleStateSuccess {
+			if m.state == puzzleStateSuccess || m.state == puzzleStateSolution {
 				return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenPuzzle} }
 			}
 		case "[":
@@ -475,6 +507,9 @@ func (m *PuzzleModel) View() string {
 	case puzzleStateFailure:
 		sb.WriteString(puzzleBadStyle.Render("Wrong move."))
 		sb.WriteString("\n")
+	case puzzleStateSolution:
+		sb.WriteString(puzzleDimStyle.Render("Solution:"))
+		sb.WriteString("\n")
 	}
 	if m.err != "" {
 		sb.WriteString(puzzleBadStyle.Render(m.err))
@@ -484,6 +519,8 @@ func (m *PuzzleModel) View() string {
 	switch m.state {
 	case puzzleStatePlaying:
 		help = "enter/click:move  ←→:navigate  [:smaller  ]:larger  n:skip  q:back"
+	case puzzleStateSolution:
+		help = "←→:navigate solution  r:retry  n:next  q:back"
 	default:
 		help = "r:retry  ←→:navigate  [:smaller  ]:larger  n:next  q:back"
 	}

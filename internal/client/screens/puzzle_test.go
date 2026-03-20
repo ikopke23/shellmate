@@ -3,6 +3,7 @@ package screens
 import (
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
 )
@@ -183,5 +184,53 @@ func TestInitGameNoFlipForWhite(t *testing.T) {
 	}
 	if m.input.flipped {
 		t.Error("input should NOT be flipped for white-to-move puzzle")
+	}
+}
+
+func TestShowSolutionTransitionsState(t *testing.T) {
+	m := setupPuzzleModel(t)
+	m.validateAndApply("e5") // wrong move → failure
+	m.showSolution()
+	if m.state != puzzleStateSolution {
+		t.Errorf("state = %v, want puzzleStateSolution", m.state)
+	}
+}
+
+func TestShowSolutionAppliesAllMoves(t *testing.T) {
+	m := setupMultiMovePuzzle(t)
+	m.validateAndApply("e5") // wrong move → failure
+	m.showSolution()
+	if len(m.game.Moves()) != len(m.solution) {
+		t.Errorf("game has %d moves after showSolution, want %d", len(m.game.Moves()), len(m.solution))
+	}
+}
+
+func TestShowSolutionSetsViewIdxToStart(t *testing.T) {
+	m := setupMultiMovePuzzle(t)
+	m.validateAndApply("e5")
+	m.showSolution()
+	ctxMoves := len(m.contextHistory) - 1
+	if m.viewIdx != ctxMoves {
+		t.Errorf("viewIdx = %d after showSolution, want %d (puzzle start)", m.viewIdx, ctxMoves)
+	}
+}
+
+func TestRetryFromSolutionState(t *testing.T) {
+	m := setupPuzzleModel(t)
+	m.validateAndApply("e5")
+	m.showSolution()
+	m.retry()
+	if m.state != puzzleStatePlaying {
+		t.Errorf("state = %v after retry from solution, want puzzleStatePlaying", m.state)
+	}
+}
+
+func TestSKeyTriggersShowSolution(t *testing.T) {
+	m := setupPuzzleModel(t)
+	m.validateAndApply("e5") // failure state
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	pm := updated.(*PuzzleModel)
+	if pm.state != puzzleStateSolution {
+		t.Errorf("state = %v after 's' key in failure, want puzzleStateSolution", pm.state)
 	}
 }
