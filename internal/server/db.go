@@ -345,7 +345,7 @@ func (d *DB) GetPuzzleByID(ctx context.Context, id string) (*PuzzleRow, error) {
 
 // BulkSavePuzzles inserts a batch of puzzles in a single multi-row INSERT.
 // ON CONFLICT (id) DO NOTHING makes it safe to re-run imports.
-func (d *DB) BulkSavePuzzles(ctx context.Context, puzzles []PuzzleRow) error {
+func (d *DB) BulkSavePuzzles(ctx context.Context, puzzles []PuzzleRow) (err error) {
 	if len(puzzles) == 0 {
 		return nil
 	}
@@ -360,10 +360,14 @@ func (d *DB) BulkSavePuzzles(ctx context.Context, puzzles []PuzzleRow) error {
 		)
 	}
 	br := d.pool.SendBatch(ctx, batch)
-	defer br.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := br.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 	for range puzzles {
-		if _, err := br.Exec(); err != nil {
-			return err
+		if _, execErr := br.Exec(); execErr != nil {
+			return execErr
 		}
 	}
 	return nil

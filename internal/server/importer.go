@@ -44,13 +44,7 @@ func parsePuzzleCSVRow(cols []string) (*PuzzleRow, error) {
 		return nil, fmt.Errorf("invalid nb_plays %q: %w", cols[6], err)
 	}
 	themes := strings.Fields(cols[7])
-	if themes == nil {
-		themes = []string{}
-	}
 	openingTags := strings.Fields(cols[9])
-	if openingTags == nil {
-		openingTags = []string{}
-	}
 	return &PuzzleRow{
 		ID:           cols[0],
 		FEN:          cols[1],
