@@ -149,6 +149,7 @@ func (m *PuzzleModel) showSolution() {
 	ctxMoves := len(m.contextHistory) - 1
 	m.viewIdx = ctxMoves
 	m.syncBoardToView()
+	m.updateMoveList()
 	m.state = puzzleStateSolution
 }
 
@@ -522,6 +523,8 @@ func (m *PuzzleModel) View() string {
 		help = "enter/click:move  ←→:navigate  [:smaller  ]:larger  n:skip  q:back"
 	case puzzleStateSolution:
 		help = "←→:navigate solution  r:retry  n:next  q:back"
+	case puzzleStateFailure:
+		help = "r:retry  s:solution  ←→:navigate  [:smaller  ]:larger  n:next  q:back"
 	default:
 		help = "r:retry  ←→:navigate  [:smaller  ]:larger  n:next  q:back"
 	}

@@ -37,14 +37,15 @@ func main() {
 			slog.Error("failed to connect to database", "error", importErr)
 			os.Exit(1)
 		}
-		defer importDB.Close()
 		slog.Info("starting puzzle import", "path", *importPath)
 		processed, inserted, skipped, importErr := server.RunImport(ctx, importDB, *importPath)
 		if importErr != nil {
+			importDB.Close()
 			slog.Error("import failed", "error", importErr)
 			os.Exit(1)
 		}
 		slog.Info("import complete", "processed", processed, "inserted", inserted, "skipped", skipped)
+		importDB.Close()
 		return
 	}
 
