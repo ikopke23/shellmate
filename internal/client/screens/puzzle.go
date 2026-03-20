@@ -130,6 +130,7 @@ func (m *PuzzleModel) retry() {
 func (m *PuzzleModel) showSolution() {
 	fenOpt, err := chess.FEN(m.initialFEN)
 	if err != nil {
+		m.err = fmt.Sprintf("invalid FEN: %v", err)
 		return
 	}
 	g := chess.NewGame(fenOpt)
