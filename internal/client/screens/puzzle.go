@@ -256,19 +256,22 @@ func (m *PuzzleModel) applyEngineResponse(uci string) {
 	if m.game == nil {
 		return
 	}
-	uciN := chess.UCINotation{}
 	pos := m.game.Position()
-	for _, opMv := range m.game.ValidMoves() {
-		if uciN.Encode(pos, opMv) == uci {
-			if err := m.game.Move(opMv); err == nil {
-				m.board.SetPosition(m.game.Position(), opMv.S1(), opMv.S2())
-				m.solutionIdx++
-				m.viewIdx = m.totalViewPositions()
-				m.updateMoveList()
-			}
-			break
-		}
+	mv, err := chess.UCINotation{}.Decode(pos, uci)
+	if err != nil {
+		m.enginePending = false
+		m.state = puzzleStateFailure
+		return
 	}
+	if err := m.game.Move(mv); err != nil {
+		m.enginePending = false
+		m.state = puzzleStateFailure
+		return
+	}
+	m.board.SetPosition(m.game.Position(), mv.S1(), mv.S2())
+	m.solutionIdx++
+	m.viewIdx = m.totalViewPositions()
+	m.updateMoveList()
 	m.enginePending = false
 	if m.solutionIdx >= len(m.solution) {
 		m.state = puzzleStateSuccess

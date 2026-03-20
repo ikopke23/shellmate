@@ -103,3 +103,56 @@ func TestPuzzleSkipMarksAsUnsolved(t *testing.T) {
 		t.Error("skipAndSubmit returned nil Cmd — expected a POST /puzzle/attempt command")
 	}
 }
+
+func setupMultiMovePuzzle(t *testing.T) *PuzzleModel {
+	t.Helper()
+	record := shared.PuzzleRecord{
+		ID:               "multi1",
+		FEN:              "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+		Moves:            "d7d5 e4d5 d8d5",
+		Rating:           1500,
+		UserPuzzleRating: 1500,
+	}
+	m := NewPuzzleModel("localhost:8080", "testuser")
+	m.SetPuzzle(record)
+	return m
+}
+
+func TestEngineResponseApplied(t *testing.T) {
+	m := setupMultiMovePuzzle(t)
+	ok, engineUCI := m.validateAndApply("d5")
+	if !ok {
+		t.Fatal("correct first move d5 was rejected")
+	}
+	if engineUCI != "e4d5" {
+		t.Fatalf("expected engine UCI e4d5, got %q", engineUCI)
+	}
+	m.applyEngineResponse(engineUCI)
+	if m.solutionIdx != 2 {
+		t.Fatalf("solutionIdx = %d after engine response, want 2", m.solutionIdx)
+	}
+	if m.state != puzzleStatePlaying {
+		t.Fatalf("state = %v after engine response, want puzzleStatePlaying", m.state)
+	}
+}
+
+func TestEngineResponseCompletesOnLastMove(t *testing.T) {
+	// Two-move puzzle: player plays, engine's reply is the last move → success
+	record := shared.PuzzleRecord{
+		ID:               "two1",
+		FEN:              "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+		Moves:            "d7d5 e4d5",
+		Rating:           1500,
+		UserPuzzleRating: 1500,
+	}
+	m := NewPuzzleModel("localhost:8080", "testuser")
+	m.SetPuzzle(record)
+	ok, engineUCI := m.validateAndApply("d5")
+	if !ok {
+		t.Fatal("correct move rejected")
+	}
+	m.applyEngineResponse(engineUCI)
+	if m.state != puzzleStateSuccess {
+		t.Fatalf("state = %v, want puzzleStateSuccess", m.state)
+	}
+}
