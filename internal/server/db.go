@@ -80,6 +80,11 @@ func NewDB(ctx context.Context, connStr string, migrationSQL string) (*DB, error
 	return &DB{pool: pool}, nil
 }
 
+// Close closes the underlying connection pool.
+func (d *DB) Close() {
+	d.pool.Close()
+}
+
 // CreateUser inserts a new user with default Elo 1500. Returns error if username already exists.
 func (d *DB) CreateUser(ctx context.Context, username string) error {
 	_, err := d.pool.Exec(ctx,
