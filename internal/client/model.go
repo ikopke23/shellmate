@@ -101,6 +101,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case screens.CreateGameMsg:
+		m.screen = screens.ScreenLobby
 		return m, m.sendCreateGame(msg.TimeControl)
 	case screens.ErrMsg:
 		// pass through to active screen
