@@ -1,10 +1,7 @@
 package screens
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -14,9 +11,6 @@ import (
 	"github.com/ikopke/shellmate/internal/client/render"
 	"github.com/notnil/chess"
 )
-
-type usernameCheckDoneMsg struct{ unknown []string }
-type saveImportedDoneMsg struct{}
 
 var (
 	replayTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).Padding(0, 1)
@@ -43,7 +37,6 @@ type ReplayModel struct {
 	backScreen ScreenID
 	moveListX  int // X start of move list on screen, computed in View()
 	moveListY  int // Y of first move row, computed in View()
-	serverAddr string
 	// branch mode
 	branchMode      bool
 	branchPointIdx  int               // stepIdx when branch was entered
@@ -74,11 +67,6 @@ func NewReplayModel() *ReplayModel {
 // SetBackScreen sets the screen to return to when the user exits replay.
 func (m *ReplayModel) SetBackScreen(s ScreenID) {
 	m.backScreen = s
-}
-
-// SetServerAddr sets the server address for HTTP calls (save-imported, check-username).
-func (m *ReplayModel) SetServerAddr(addr string) {
-	m.serverAddr = addr
 }
 
 // LoadPGN parses a PGN string and sets up the replay.
@@ -246,15 +234,15 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case usernameCheckDoneMsg:
-		if len(msg.unknown) == 0 {
+	case UsernameCheckDoneMsg:
+		if len(msg.Unknown) == 0 {
 			return m, m.doSave(false)
 		}
-		m.saveUnknownNames = msg.unknown
+		m.saveUnknownNames = msg.Unknown
 		m.saveConfirmIdx = 0
 		m.saveStep = 2
 		return m, nil
-	case saveImportedDoneMsg:
+	case SaveImportedDoneMsg:
 		m.savePromptActive = false
 		m.saveMsg = "game saved"
 		return m, nil
@@ -463,53 +451,14 @@ func (m *ReplayModel) updateSavePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *ReplayModel) checkUsernames() tea.Cmd {
 	white := strings.TrimSpace(m.saveWhiteInput.Value())
 	black := strings.TrimSpace(m.saveBlackInput.Value())
-	addr := m.serverAddr
-	return func() tea.Msg {
-		var unknown []string
-		for _, name := range []string{white, black} {
-			resp, err := http.Get("http://" + addr + "/check-username?name=" + name)
-			if err != nil {
-				return ErrMsg{Err: err}
-			}
-			var result struct {
-				Exists bool `json:"exists"`
-			}
-			decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-			resp.Body.Close()
-			if decodeErr != nil {
-				return ErrMsg{Err: decodeErr}
-			}
-			if !result.Exists {
-				unknown = append(unknown, name)
-			}
-		}
-		return usernameCheckDoneMsg{unknown: unknown}
-	}
+	return func() tea.Msg { return CheckUsernamesActionMsg{White: white, Black: black} }
 }
 
 func (m *ReplayModel) doSave(forceCreate bool) tea.Cmd {
 	white := strings.TrimSpace(m.saveWhiteInput.Value())
 	black := strings.TrimSpace(m.saveBlackInput.Value())
 	pgn := m.buildBranchPGN()
-	addr := m.serverAddr
-	return func() tea.Msg {
-		body := struct {
-			White       string `json:"white"`
-			Black       string `json:"black"`
-			PGN         string `json:"pgn"`
-			ForceCreate bool   `json:"force_create"`
-		}{white, black, pgn, forceCreate}
-		data, _ := json.Marshal(body)
-		resp, err := http.Post("http://"+addr+"/save-imported", "application/json", bytes.NewReader(data))
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusNoContent {
-			return ErrMsg{Err: fmt.Errorf("server returned %d", resp.StatusCode)}
-		}
-		return saveImportedDoneMsg{}
-	}
+	return func() tea.Msg { return SaveImportedActionMsg{White: white, Black: black, PGN: pgn, ForceCreate: forceCreate} }
 }
 
 func (m *ReplayModel) buildBranchPGN() string {

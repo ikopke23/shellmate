@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/gorilla/websocket"
 	"github.com/ikopke/shellmate/internal/client/render"
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
@@ -51,7 +50,6 @@ type GameModel struct {
 	myColor           chess.Color
 	input             *LocalMoveInput
 	statusMsg         string
-	conn              *websocket.Conn
 	username          string
 	gameOver          bool
 	result            string
@@ -66,7 +64,7 @@ type GameModel struct {
 }
 
 // NewGameModel creates a new game screen.
-func NewGameModel(gameID, white, black string, myColor chess.Color, conn *websocket.Conn, username string, tc shared.TimeControl) *GameModel {
+func NewGameModel(gameID, white, black string, myColor chess.Color, username string, tc shared.TimeControl) *GameModel {
 	g := chess.NewGame()
 	flipped := myColor == chess.Black
 	return &GameModel{
@@ -78,7 +76,6 @@ func NewGameModel(gameID, white, black string, myColor chess.Color, conn *websoc
 		chess:    g,
 		myColor:  myColor,
 		input:    NewLocalMoveInput(myColor == chess.Black),
-		conn:     conn,
 		username: username,
 		timed:    tc.InitialSeconds > 0,
 		whiteMs:  tc.InitialSeconds * 1000,
@@ -295,55 +292,19 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *GameModel) sendMoveStr(san string) tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgMove, shared.Move{GameID: m.gameID, SAN: san})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return MakeMoveMsg{SAN: san} }
 }
 
 func (m *GameModel) sendUndo() tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgUndoRequest, shared.UndoRequest{GameID: m.gameID})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return RequestUndoMsg{} }
 }
 
 func (m *GameModel) sendResign() tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgResign, shared.Resign{GameID: m.gameID})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return ResignMsg{} }
 }
 
 func (m *GameModel) sendUndoResponse(accept bool) tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgUndoResponse, shared.UndoResponse{GameID: m.gameID, Accept: accept})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return RespondUndoMsg{Accept: accept} }
 }
 
 // View implements tea.Model.

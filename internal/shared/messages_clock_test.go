@@ -13,16 +13,12 @@ func TestMoveMsgRoundTrip(t *testing.T) {
 		Moves:  []string{"e4", "e5"},
 		Clock:  shared.ClockState{WhiteMs: 60000, BlackMs: 59000},
 	}
-	data, err := shared.Encode(shared.MsgMove, msg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	env, err := shared.Decode(data)
+	data, err := json.Marshal(msg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got shared.MoveMsg
-	if err := json.Unmarshal(env.Payload, &got); err != nil {
+	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.GameID != msg.GameID || got.Clock.WhiteMs != 60000 || len(got.Moves) != 2 {

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
 )
@@ -182,13 +183,13 @@ func (g *Game) PGN() string {
 }
 
 // Broadcast sends a message to both players and all spectators.
-func (g *Game) Broadcast(msg []byte) {
+func (g *Game) Broadcast(msg tea.Msg) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.broadcastLocked(msg)
 }
 
-func (g *Game) broadcastLocked(msg []byte) {
+func (g *Game) broadcastLocked(msg tea.Msg) {
 	if g.white != nil {
 		g.white.Send(msg)
 	}
@@ -211,20 +212,14 @@ func (g *Game) BroadcastMove() {
 	for i, m := range moves {
 		moveList = append(moveList, notation.Encode(positions[i], m))
 	}
-	clock := shared.ClockState{
-		WhiteMs: int(g.whiteRemaining.Milliseconds()),
-		BlackMs: int(g.blackRemaining.Milliseconds()),
-	}
-	data, err := shared.Encode(shared.MsgMove, shared.MoveMsg{
+	g.broadcastLocked(shared.MoveMsg{
 		GameID: g.id,
 		Moves:  moveList,
-		Clock:  clock,
+		Clock: shared.ClockState{
+			WhiteMs: int(g.whiteRemaining.Milliseconds()),
+			BlackMs: int(g.blackRemaining.Milliseconds()),
+		},
 	})
-	if err != nil {
-		slog.Error("failed to encode move broadcast", "error", err)
-		return
-	}
-	g.broadcastLocked(data)
 }
 
 // CurrentClockState returns the current clock state (for spectate catch-up).
@@ -255,12 +250,7 @@ func (g *Game) BroadcastUndoAccepted() {
 	for i, m := range moves {
 		moveList = append(moveList, notation.Encode(positions[i], m))
 	}
-	data, err := shared.Encode(shared.MsgUndoAccepted, shared.UndoAccepted{GameID: g.id, Moves: moveList})
-	if err != nil {
-		slog.Error("failed to encode undo_accepted broadcast", "error", err)
-		return
-	}
-	g.broadcastLocked(data)
+	g.broadcastLocked(shared.UndoAccepted{GameID: g.id, Moves: moveList})
 }
 
 // IsOver returns true if the game has ended (outcome != "*").
@@ -314,7 +304,7 @@ func (g *Game) handleGameOver(ctx context.Context, hub *Hub) {
 		slog.Error("failed to save game", "error", err)
 		return
 	}
-	overMsg, err := shared.Encode(shared.MsgGameOver, shared.GameOver{
+	g.Broadcast(shared.GameOver{
 		GameID:         g.id,
 		Result:         string(outcome),
 		WhiteEloBefore: whiteUser.Elo,
@@ -324,9 +314,4 @@ func (g *Game) handleGameOver(ctx context.Context, hub *Hub) {
 		WhiteUsername:  g.white.username,
 		BlackUsername:  g.black.username,
 	})
-	if err != nil {
-		slog.Error("failed to encode game_over", "error", err)
-		return
-	}
-	g.Broadcast(overMsg)
 }

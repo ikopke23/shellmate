@@ -1,10 +1,7 @@
 package screens
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -50,7 +47,6 @@ type puzzleViewPos struct {
 
 // PuzzleModel is the puzzle mode screen.
 type PuzzleModel struct {
-	serverAddr       string
 	username         string
 	state            puzzleState
 	record           *shared.PuzzleRecord
@@ -72,13 +68,12 @@ type PuzzleModel struct {
 }
 
 // NewPuzzleModel creates a puzzle screen in loading state.
-func NewPuzzleModel(serverAddr, username string) *PuzzleModel {
+func NewPuzzleModel(username string) *PuzzleModel {
 	return &PuzzleModel{
-		serverAddr: serverAddr,
-		username:   username,
-		state:      puzzleStateLoading,
-		board:      render.NewBoard(chess.NewGame().Position(), false),
-		moveList:   render.NewMoveList(14),
+		username: username,
+		state:    puzzleStateLoading,
+		board:    render.NewBoard(chess.NewGame().Position(), false),
+		moveList: render.NewMoveList(14),
 	}
 }
 
@@ -435,51 +430,16 @@ func (m *PuzzleModel) submitAttempt(solved bool) tea.Cmd {
 	}
 	m.submitted = true
 	id := m.record.ID
-	username := m.username
-	addr := m.serverAddr
-	return func() tea.Msg {
-		body, _ := json.Marshal(map[string]any{
-			"username":  username,
-			"puzzle_id": id,
-			"solved":    solved,
-		})
-		resp, err := http.Post("http://"+addr+"/puzzle/attempt", "application/json", bytes.NewReader(body))
-		if err != nil {
-			return PuzzleAttemptMsg{Err: err}
-		}
-		defer resp.Body.Close()
-		var result shared.PuzzleAttemptResult
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return PuzzleAttemptMsg{Err: err}
-		}
-		return PuzzleAttemptMsg{NewRating: result.PuzzleRating}
-	}
+	return func() tea.Msg { return SubmitPuzzleAttemptMsg{PuzzleID: id, Solved: solved} }
 }
 
-// skipAndSubmit records the current puzzle as skipped then navigates to the next puzzle.
-// Navigation happens after the POST completes so the attempt is committed before the next
-// puzzle fetch, preventing the server from returning the same puzzle again.
 func (m *PuzzleModel) skipAndSubmit() tea.Cmd {
 	if m.record == nil || m.submitted {
 		return func() tea.Msg { return ScreenChangeMsg{Screen: ScreenPuzzle} }
 	}
 	m.submitted = true
 	id := m.record.ID
-	username := m.username
-	addr := m.serverAddr
-	return func() tea.Msg {
-		body, _ := json.Marshal(map[string]any{
-			"username":  username,
-			"puzzle_id": id,
-			"solved":    false,
-			"skipped":   true,
-		})
-		resp, err := http.Post("http://"+addr+"/puzzle/attempt", "application/json", bytes.NewReader(body))
-		if err == nil {
-			resp.Body.Close()
-		}
-		return ScreenChangeMsg{Screen: ScreenPuzzle}
-	}
+	return func() tea.Msg { return SubmitPuzzleAttemptMsg{PuzzleID: id, Skipped: true} }
 }
 
 // View implements tea.Model.

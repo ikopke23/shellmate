@@ -1,40 +1,6 @@
 package shared
 
-import (
-	"encoding/json"
-	"time"
-)
-
-// MsgType identifies the kind of WebSocket message being sent or received.
-type MsgType string
-
-const (
-	MsgJoinLobby    MsgType = "join_lobby"
-	MsgLobbyState   MsgType = "lobby_state"
-	MsgCreateGame   MsgType = "create_game"
-	MsgJoinGame     MsgType = "join_game"
-	MsgSpectateGame MsgType = "spectate_game"
-	MsgMove         MsgType = "move"
-	MsgUndoRequest  MsgType = "undo_request"
-	MsgUndoResponse MsgType = "undo_response"
-	MsgUndoAccepted MsgType = "undo_accepted"
-	MsgGameStart    MsgType = "game_start"
-	MsgResign       MsgType = "resign"
-	MsgGameOver     MsgType = "game_over"
-	MsgError        MsgType = "error"
-)
-
-// Envelope is the top-level wrapper for all WebSocket messages.
-type Envelope struct {
-	Type    MsgType         `json:"type"`
-	Payload json.RawMessage `json:"payload,omitempty"`
-}
-
-// JoinLobby is sent by a client when connecting to the lobby.
-type JoinLobby struct {
-	InviteCode string `json:"invite_code"`
-	Username   string `json:"username"`
-}
+import "time"
 
 // PlayerInfo describes a player in the lobby.
 type PlayerInfo struct {
@@ -178,20 +144,4 @@ type PuzzleRecord struct {
 // PuzzleAttemptResult is returned by POST /puzzle/attempt.
 type PuzzleAttemptResult struct {
 	PuzzleRating int `json:"puzzle_rating"`
-}
-
-// Encode wraps a payload into an Envelope and marshals it to JSON.
-func Encode(msgType MsgType, payload any) ([]byte, error) {
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(Envelope{Type: msgType, Payload: raw})
-}
-
-// Decode unmarshals an Envelope from JSON bytes.
-func Decode(data []byte) (Envelope, error) {
-	var env Envelope
-	err := json.Unmarshal(data, &env)
-	return env, err
 }

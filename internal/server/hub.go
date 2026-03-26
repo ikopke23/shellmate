@@ -3,19 +3,18 @@ package server
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
 )
 
-// Hub manages all active WebSocket connections and routes messages.
+// Hub manages all active SSH session connections and routes messages.
 type Hub struct {
 	db         *DB
 	clients    map[string]*Client // username -> client
@@ -24,29 +23,35 @@ type Hub struct {
 	inviteCode string
 }
 
-// Client represents a connected WebSocket client.
+// Client represents a connected SSH session client.
 type Client struct {
 	username string
-	conn     *websocket.Conn
-	send     chan []byte
+	send     chan tea.Msg
 	done     chan struct{}
 	doneOnce sync.Once
 	hub      *Hub
 	game     string // game ID the client is currently in, or ""
 }
 
-// closeDone closes the done channel exactly once.
-func (c *Client) closeDone() {
-	c.doneOnce.Do(func() { close(c.done) })
-}
-
-// Send queues a message for writing. Safe to call after the client is unregistered.
-func (c *Client) Send(msg []byte) {
+// Send queues a message for delivery to the client's TUI. Safe to call after unregistration.
+func (c *Client) Send(msg tea.Msg) {
 	select {
 	case c.send <- msg:
 	case <-c.done:
 	default:
 		slog.Warn("client send buffer full, dropping message", "username", c.username)
+	}
+}
+
+// Recv returns a tea.Cmd that blocks until a message arrives from the hub or the client disconnects.
+func (c *Client) Recv() tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case msg := <-c.send:
+			return msg
+		case <-c.done:
+			return tea.Quit
+		}
 	}
 }
 
@@ -59,6 +64,52 @@ func NewHub(db *DB, inviteCode string) *Hub {
 		inviteCode: inviteCode,
 	}
 }
+
+// GetUserByKeyFingerprint looks up a user by SSH public key fingerprint.
+func (h *Hub) GetUserByKeyFingerprint(ctx context.Context, fingerprint string) (*User, error) {
+	return h.db.GetUserByKeyFingerprint(ctx, fingerprint)
+}
+
+// RegisterUser creates a new user linked to the given SSH key fingerprint.
+func (h *Hub) RegisterUser(ctx context.Context, username, fingerprint string) (*User, error) {
+	return h.db.CreateUserWithKey(ctx, username, fingerprint)
+}
+
+// LinkKey adds a new SSH key fingerprint to an existing user account.
+func (h *Hub) LinkKey(ctx context.Context, username, fingerprint string) error {
+	return h.db.LinkKeyToUser(ctx, username, fingerprint)
+}
+
+// GetUser returns the user row for the given username.
+func (h *Hub) GetUser(ctx context.Context, username string) (*User, error) {
+	return h.db.GetUser(ctx, username)
+}
+
+// GetHistory returns the game history for the given user.
+func (h *Hub) GetHistory(ctx context.Context, username string) ([]HistoryRecord, error) {
+	return h.db.GetGameHistory(ctx, username)
+}
+
+// GetPuzzle returns the next puzzle for the given user as a shared.PuzzleRecord.
+func (h *Hub) GetPuzzle(ctx context.Context, username string) (*shared.PuzzleRecord, error) {
+	row, userRating, err := h.GetPuzzleForUser(ctx, username)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return &shared.PuzzleRecord{
+		ID:               row.ID,
+		FEN:              row.FEN,
+		Moves:            row.Moves,
+		ContextMoves:     row.ContextMoves,
+		Rating:           row.Rating,
+		Themes:           row.Themes,
+		GameURL:          row.GameURL,
+		UserPuzzleRating: userRating,
+	}, nil
+}
+
+// InviteCode returns the hub's invite code.
+func (h *Hub) InviteCode() string { return h.inviteCode }
 
 // GetLeaderboard returns all users ordered by Elo DESC.
 func (h *Hub) GetLeaderboard(ctx context.Context) ([]User, error) {
@@ -161,20 +212,17 @@ func (h *Hub) RecordPuzzleAttempt(ctx context.Context, username, puzzleID string
 	return newRating, nil
 }
 
-// Register adds a new authenticated client to the hub.
-// If there is already a connection for this username, the old connection is closed.
-func (h *Hub) Register(username string, conn *websocket.Conn) *Client {
+// Register adds an authenticated client to the hub, evicting any existing session for the same user.
+func (h *Hub) Register(username string) *Client {
 	c := &Client{
 		username: username,
-		conn:     conn,
-		send:     make(chan []byte, 256),
+		send:     make(chan tea.Msg, 256),
 		done:     make(chan struct{}),
 		hub:      h,
 	}
 	h.mu.Lock()
 	if existing, ok := h.clients[username]; ok {
-		existing.conn.Close()
-		existing.closeDone()
+		existing.doneOnce.Do(func() { close(existing.done) })
 	}
 	h.clients[username] = c
 	h.mu.Unlock()
@@ -188,7 +236,7 @@ func (h *Hub) Unregister(c *Client) {
 	if stored, ok := h.clients[c.username]; ok && stored == c {
 		delete(h.clients, c.username)
 	}
-	c.closeDone()
+	c.doneOnce.Do(func() { close(c.done) })
 	// snapshot games to clean up spectators from, without holding lock
 	var spectatorGames []*Game
 	for _, g := range h.games {
@@ -206,9 +254,9 @@ func (h *Hub) Unregister(c *Client) {
 	}
 }
 
-// buildLobbyData builds the encoded LobbyState message and returns a snapshot of current clients.
+// buildLobbyData builds the LobbyState and returns a snapshot of current clients.
 // Caller must NOT hold h.mu.
-func (h *Hub) buildLobbyData(ctx context.Context) ([]byte, []*Client, error) {
+func (h *Hub) buildLobbyData(ctx context.Context) (shared.LobbyState, []*Client, error) {
 	h.mu.RLock()
 	// snapshot everything we need from the hub while locked
 	usernames := make([]string, 0, len(h.clients))
@@ -247,100 +295,33 @@ func (h *Hub) buildLobbyData(ctx context.Context) ([]byte, []*Client, error) {
 		playerInfos = append(playerInfos, shared.PlayerInfo{Username: u, Elo: user.Elo, Online: true})
 	}
 	state := shared.LobbyState{Players: playerInfos, Games: gameInfos}
-	data, err := shared.Encode(shared.MsgLobbyState, state)
-	return data, clientSnapshot, err
+	return state, clientSnapshot, nil
 }
 
-// sendLobbyTo sends the current lobby state to a single client.
 func (h *Hub) sendLobbyTo(ctx context.Context, c *Client) {
-	data, _, err := h.buildLobbyData(ctx)
+	state, _, err := h.buildLobbyData(ctx)
 	if err != nil {
 		slog.Error("failed to build lobby data", "error", err)
 		return
 	}
-	if data != nil {
-		c.Send(data)
-	}
+	c.Send(state)
 }
 
 // BroadcastLobby sends the current lobby state to all connected clients.
 func (h *Hub) BroadcastLobby(ctx context.Context) {
-	data, clients, err := h.buildLobbyData(ctx)
+	state, clients, err := h.buildLobbyData(ctx)
 	if err != nil {
 		slog.Error("failed to build lobby data", "error", err)
 		return
 	}
-	if data == nil {
-		return
-	}
 	for _, c := range clients {
-		c.Send(data)
+		c.Send(state)
 	}
 }
 
-// Route dispatches an incoming Envelope to the correct handler.
-func (h *Hub) Route(ctx context.Context, c *Client, env shared.Envelope) {
-	switch env.Type {
-	case shared.MsgJoinLobby:
-		// Already connected; re-send lobby state.
-		h.sendLobbyTo(ctx, c)
-	case shared.MsgCreateGame:
-		var payload shared.CreateGame
-		if err := json.Unmarshal(env.Payload, &payload); err != nil {
-			sendError(c, "invalid create_game payload")
-			return
-		}
-		h.handleCreateGame(ctx, c, payload)
-	case shared.MsgJoinGame:
-		var payload shared.JoinGame
-		if err := json.Unmarshal(env.Payload, &payload); err != nil {
-			sendError(c, "invalid join_game payload")
-			return
-		}
-		h.handleJoinGame(ctx, c, payload)
-	case shared.MsgSpectateGame:
-		var payload shared.SpectateGame
-		if err := json.Unmarshal(env.Payload, &payload); err != nil {
-			sendError(c, "invalid spectate_game payload")
-			return
-		}
-		h.handleSpectateGame(ctx, c, payload)
-	case shared.MsgMove:
-		var payload shared.Move
-		if err := json.Unmarshal(env.Payload, &payload); err != nil {
-			sendError(c, "invalid move payload")
-			return
-		}
-		h.handleMove(ctx, c, payload)
-	case shared.MsgUndoRequest:
-		var payload shared.UndoRequest
-		if err := json.Unmarshal(env.Payload, &payload); err != nil {
-			sendError(c, "invalid undo_request payload")
-			return
-		}
-		h.handleUndoRequest(c, payload)
-	case shared.MsgResign:
-		var payload shared.Resign
-		if err := json.Unmarshal(env.Payload, &payload); err != nil {
-			sendError(c, "invalid resign payload")
-			return
-		}
-		h.handleResign(ctx, c, payload)
-	case shared.MsgUndoResponse:
-		var payload shared.UndoResponse
-		if err := json.Unmarshal(env.Payload, &payload); err != nil {
-			sendError(c, "invalid undo_response payload")
-			return
-		}
-		h.handleUndoResponse(ctx, c, payload)
-	default:
-		sendError(c, fmt.Sprintf("unknown message type: %s", env.Type))
-	}
-}
-
-func (h *Hub) handleCreateGame(ctx context.Context, c *Client, payload shared.CreateGame) {
+// CreateGame creates a new game with the given time control.
+func (h *Hub) CreateGame(ctx context.Context, c *Client, tc shared.TimeControl) {
 	id := generateID()
-	tc := payload.TimeControl
 	h.mu.Lock()
 	g := NewGame(id, c, nil, tc.InitialSeconds, tc.IncrementSeconds)
 	h.games[id] = g
@@ -350,9 +331,10 @@ func (h *Hub) handleCreateGame(ctx context.Context, c *Client, payload shared.Cr
 	h.BroadcastLobby(ctx)
 }
 
-func (h *Hub) handleJoinGame(ctx context.Context, c *Client, payload shared.JoinGame) {
+// JoinGame joins an existing open game.
+func (h *Hub) JoinGame(ctx context.Context, c *Client, gameID string) {
 	h.mu.Lock()
-	g, ok := h.games[payload.GameID]
+	g, ok := h.games[gameID]
 	if !ok {
 		h.mu.Unlock()
 		sendError(c, "game not found")
@@ -372,7 +354,7 @@ func (h *Hub) handleJoinGame(ctx context.Context, c *Client, payload shared.Join
 		return
 	}
 	g.black = c
-	c.game = payload.GameID
+	c.game = gameID
 	g.turnStartedAt = time.Now()
 	whiteUsername := g.white.username
 	timeControl := shared.TimeControl{
@@ -381,16 +363,14 @@ func (h *Hub) handleJoinGame(ctx context.Context, c *Client, payload shared.Join
 	}
 	g.mu.Unlock()
 	h.mu.Unlock()
-	slog.Info("player joined game", "game_id", payload.GameID, "black", c.username)
-	go h.closeOpenGamesForUsers(ctx, whiteUsername, c.username, payload.GameID)
-	// notify both players the game has started
-	startMsg, _ := shared.Encode(shared.MsgGameStart, shared.GameStart{
-		GameID:      payload.GameID,
+	slog.Info("player joined game", "game_id", gameID, "black", c.username)
+	go h.closeOpenGamesForUsers(ctx, whiteUsername, c.username, gameID)
+	g.Broadcast(shared.GameStart{
+		GameID:      gameID,
 		White:       whiteUsername,
 		Black:       c.username,
 		TimeControl: timeControl,
 	})
-	g.Broadcast(startMsg)
 	h.BroadcastLobby(ctx)
 }
 
@@ -421,9 +401,10 @@ func (h *Hub) closeOpenGamesForUsers(ctx context.Context, white, black, startedG
 	}
 }
 
-func (h *Hub) handleSpectateGame(ctx context.Context, c *Client, payload shared.SpectateGame) {
+// SpectateGame adds the client as a spectator of the given game.
+func (h *Hub) SpectateGame(ctx context.Context, c *Client, gameID string) {
 	h.mu.RLock()
-	g, ok := h.games[payload.GameID]
+	g, ok := h.games[gameID]
 	h.mu.RUnlock()
 	if !ok {
 		sendError(c, "game not found")
@@ -431,7 +412,7 @@ func (h *Hub) handleSpectateGame(ctx context.Context, c *Client, payload shared.
 	}
 	g.mu.Lock()
 	g.spectators = append(g.spectators, c)
-	c.game = payload.GameID
+	c.game = gameID
 	started := g.black != nil
 	var whiteUsername, blackUsername string
 	var moveList []string
@@ -453,41 +434,40 @@ func (h *Hub) handleSpectateGame(ctx context.Context, c *Client, payload shared.
 		}
 	}
 	g.mu.Unlock()
-	slog.Info("spectator joined game", "game_id", payload.GameID, "spectator", c.username)
+	slog.Info("spectator joined game", "game_id", gameID, "spectator", c.username)
 	if started {
-		startMsg, _ := shared.Encode(shared.MsgGameStart, shared.GameStart{
-			GameID:      payload.GameID,
+		c.Send(shared.GameStart{
+			GameID:      gameID,
 			White:       whiteUsername,
 			Black:       blackUsername,
 			TimeControl: timeControl,
 		})
-		c.Send(startMsg)
 		if len(moveList) > 0 {
-			moveData, _ := shared.Encode(shared.MsgMove, shared.MoveMsg{
-				GameID: payload.GameID,
+			c.Send(shared.MoveMsg{
+				GameID: gameID,
 				Moves:  moveList,
 				Clock:  shared.ClockState{WhiteMs: whiteMs, BlackMs: blackMs},
 			})
-			c.Send(moveData)
 		}
 	}
 	h.BroadcastLobby(ctx)
 }
 
-func (h *Hub) handleMove(ctx context.Context, c *Client, payload shared.Move) {
+// MakeMove applies a move in the client's current game.
+func (h *Hub) MakeMove(ctx context.Context, c *Client, san string) {
 	h.mu.RLock()
-	g, ok := h.games[payload.GameID]
+	g, ok := h.games[c.game]
 	h.mu.RUnlock()
 	if !ok {
 		sendError(c, "game not found")
 		return
 	}
-	if err := g.ApplyMove(c, payload.SAN); err != nil {
+	if err := g.ApplyMove(c, san); err != nil {
 		if errors.Is(err, ErrTimeExpired) {
 			h.mu.Lock()
-			_, stillExists := h.games[payload.GameID]
+			_, stillExists := h.games[c.game]
 			if stillExists {
-				delete(h.games, payload.GameID)
+				delete(h.games, c.game)
 			}
 			h.mu.Unlock()
 			if stillExists {
@@ -502,9 +482,9 @@ func (h *Hub) handleMove(ctx context.Context, c *Client, payload shared.Move) {
 	g.BroadcastMove()
 	if g.IsOver() {
 		h.mu.Lock()
-		_, stillExists := h.games[payload.GameID]
+		_, stillExists := h.games[c.game]
 		if stillExists {
-			delete(h.games, payload.GameID)
+			delete(h.games, c.game)
 		}
 		h.mu.Unlock()
 		if stillExists {
@@ -514,9 +494,10 @@ func (h *Hub) handleMove(ctx context.Context, c *Client, payload shared.Move) {
 	}
 }
 
-func (h *Hub) handleUndoRequest(c *Client, payload shared.UndoRequest) {
+// RequestUndo sends an undo request to the opponent in the client's current game.
+func (h *Hub) RequestUndo(c *Client) {
 	h.mu.RLock()
-	g, ok := h.games[payload.GameID]
+	g, ok := h.games[c.game]
 	h.mu.RUnlock()
 	if !ok {
 		sendError(c, "game not found")
@@ -526,7 +507,6 @@ func (h *Hub) handleUndoRequest(c *Client, payload shared.UndoRequest) {
 		sendError(c, err.Error())
 		return
 	}
-	// Send the undo request to the opponent.
 	g.mu.Lock()
 	var opponent *Client
 	if c == g.white {
@@ -536,34 +516,30 @@ func (h *Hub) handleUndoRequest(c *Client, payload shared.UndoRequest) {
 	}
 	g.mu.Unlock()
 	if opponent != nil {
-		data, err := shared.Encode(shared.MsgUndoRequest, shared.UndoRequest{GameID: payload.GameID})
-		if err == nil {
-			opponent.Send(data)
-		}
+		opponent.Send(shared.UndoRequest{GameID: c.game})
 	}
 }
 
-func (h *Hub) handleUndoResponse(ctx context.Context, c *Client, payload shared.UndoResponse) {
+// RespondUndo accepts or rejects a pending undo request in the client's current game.
+func (h *Hub) RespondUndo(ctx context.Context, c *Client, accept bool) {
 	h.mu.RLock()
-	g, ok := h.games[payload.GameID]
+	g, ok := h.games[c.game]
 	h.mu.RUnlock()
 	if !ok {
 		sendError(c, "game not found")
 		return
 	}
-	if payload.Accept {
+	if accept {
 		if err := g.AcceptUndo(c); err != nil {
 			sendError(c, err.Error())
 			return
 		}
-		// Broadcast undo accepted with current move list.
 		g.BroadcastUndoAccepted()
 	} else {
 		if err := g.RejectUndo(c); err != nil {
 			sendError(c, err.Error())
 			return
 		}
-		// Notify the requester that undo was rejected.
 		g.mu.Lock()
 		var requester *Client
 		if c == g.white {
@@ -573,17 +549,15 @@ func (h *Hub) handleUndoResponse(ctx context.Context, c *Client, payload shared.
 		}
 		g.mu.Unlock()
 		if requester != nil {
-			data, err := shared.Encode(shared.MsgUndoResponse, shared.UndoResponse{GameID: payload.GameID, Accept: false})
-			if err == nil {
-				requester.Send(data)
-			}
+			requester.Send(shared.UndoResponse{GameID: c.game, Accept: false})
 		}
 	}
 }
 
-func (h *Hub) handleResign(ctx context.Context, c *Client, payload shared.Resign) {
+// Resign forfeits the client's current game.
+func (h *Hub) Resign(ctx context.Context, c *Client) {
 	h.mu.RLock()
-	g, ok := h.games[payload.GameID]
+	g, ok := h.games[c.game]
 	h.mu.RUnlock()
 	if !ok {
 		sendError(c, "game not found")
@@ -599,9 +573,9 @@ func (h *Hub) handleResign(ctx context.Context, c *Client, payload shared.Resign
 	g.chess.Resign(resignColor)
 	g.mu.Unlock()
 	h.mu.Lock()
-	_, stillExists := h.games[payload.GameID]
+	_, stillExists := h.games[c.game]
 	if stillExists {
-		delete(h.games, payload.GameID)
+		delete(h.games, c.game)
 	}
 	h.mu.Unlock()
 	if stillExists {
@@ -610,110 +584,8 @@ func (h *Hub) handleResign(ctx context.Context, c *Client, payload shared.Resign
 	}
 }
 
-// HandleConn handles a single WebSocket connection from accept to close.
-func (h *Hub) HandleConn(ctx context.Context, conn *websocket.Conn) {
-	// Step 1: Read first message — must be join_lobby.
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-	_, msg, err := conn.ReadMessage()
-	if err != nil {
-		slog.Error("failed to read first message", "error", err)
-		conn.Close()
-		return
-	}
-	conn.SetReadDeadline(time.Time{})
-	env, err := shared.Decode(msg)
-	if err != nil || env.Type != shared.MsgJoinLobby {
-		writeError(conn, "first message must be join_lobby")
-		conn.Close()
-		return
-	}
-	var join shared.JoinLobby
-	if err := json.Unmarshal(env.Payload, &join); err != nil {
-		writeError(conn, "invalid join_lobby payload")
-		conn.Close()
-		return
-	}
-	// Step 2: Validate invite code.
-	if join.InviteCode != h.inviteCode {
-		writeError(conn, "invalid invite code")
-		conn.Close()
-		return
-	}
-	if join.Username == "" {
-		writeError(conn, "username is required")
-		conn.Close()
-		return
-	}
-	// Step 3: Look up username in DB.
-	u, err := h.db.GetUser(ctx, join.Username)
-	if err != nil {
-		writeError(conn, "database error")
-		conn.Close()
-		return
-	}
-	if u == nil {
-		if err := h.db.CreateUser(ctx, join.Username); err != nil {
-			writeError(conn, "failed to create user")
-			conn.Close()
-			return
-		}
-	}
-	// Step 4: Register the client.
-	client := h.Register(join.Username, conn)
-	slog.Info("client connected", "username", join.Username)
-	// Step 5 & 6: Send lobby state and broadcast.
-	h.BroadcastLobby(ctx)
-	// Step 7: Start write goroutine.
-	go func() {
-		defer conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		for {
-			select {
-			case msg := <-client.send:
-				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					slog.Error("write error", "username", client.username, "err", err)
-					conn.Close()
-					return
-				}
-			case <-client.done:
-				return
-			}
-		}
-	}()
-	// Step 8: Read loop.
-	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			slog.Info("client disconnected", "username", client.username, "error", err)
-			break
-		}
-		env, err := shared.Decode(msg)
-		if err != nil {
-			sendError(client, "invalid message format")
-			continue
-		}
-		h.Route(ctx, client, env)
-	}
-	// Step 9: Cleanup on disconnect.
-	h.Unregister(client)
-	h.BroadcastLobby(ctx)
-}
-
-// sendError sends an error message to a client via their send channel.
 func sendError(c *Client, message string) {
-	data, err := shared.Encode(shared.MsgError, shared.ErrorMsg{Message: message})
-	if err != nil {
-		return
-	}
-	c.Send(data)
-}
-
-// writeError writes an error message directly to a websocket connection.
-func writeError(conn *websocket.Conn, message string) {
-	data, err := shared.Encode(shared.MsgError, shared.ErrorMsg{Message: message})
-	if err != nil {
-		return
-	}
-	conn.WriteMessage(websocket.TextMessage, data)
+	c.Send(shared.ErrorMsg{Message: message})
 }
 
 // generateID creates a random hex string suitable for game IDs.

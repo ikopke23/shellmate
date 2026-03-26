@@ -10,7 +10,7 @@ import (
 
 func newTestGame() *GameModel {
 	tc := shared.TimeControl{InitialSeconds: 60, IncrementSeconds: 0}
-	g := NewGameModel("id", "white", "black", chess.White, nil, "white", tc)
+	g := NewGameModel("id", "white", "black", chess.White, "white", tc)
 	g.SetMovesWithClock([]string{"e4", "e5", "Nf3"}, shared.ClockState{WhiteMs: 58000, BlackMs: 59000})
 	return g
 }

@@ -1,15 +1,11 @@
 package client
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
+	"context"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/gorilla/websocket"
 	"github.com/ikopke/shellmate/internal/client/screens"
+	"github.com/ikopke/shellmate/internal/server"
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
 )
@@ -19,13 +15,12 @@ type leaderboardLoadedMsg struct{ players []shared.PlayerInfo }
 type importedGamesLoadedMsg struct{ records []shared.HistoryRecord }
 type puzzleLoadedMsg struct{ record shared.PuzzleRecord }
 
-// Model is the root bubbletea model.
+// Model is the root bubbletea model for an authenticated SSH session.
 type Model struct {
 	screen        screens.ScreenID
-	conn          *websocket.Conn
-	username      string
-	serverAddr    string
-	login         *screens.LoginModel
+	hub           *server.Hub
+	client        *server.Client
+	user          *server.User
 	lobby         *screens.LobbyModel
 	game          *screens.GameModel
 	history       *screens.HistoryModel
@@ -35,22 +30,25 @@ type Model struct {
 	importedGames *screens.ImportedGamesModel
 	puzzle        *screens.PuzzleModel
 	createGame    *screens.CreateGameModel
-	width         int
-	height        int
+	width, height int
 }
 
-// NewModel creates the root model starting at the login screen.
-func NewModel(serverAddr string) Model {
+// NewModel creates the root model starting at the lobby screen.
+func NewModel(hub *server.Hub, client *server.Client, user *server.User, w, h int) Model {
 	return Model{
-		screen:     screens.ScreenLogin,
-		serverAddr: serverAddr,
-		login:      screens.NewLoginModel(serverAddr),
+		screen: screens.ScreenLobby,
+		hub:    hub,
+		client: client,
+		user:   user,
+		lobby:  screens.NewLobbyModel(user.Username),
+		width:  w,
+		height: h,
 	}
 }
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return m.login.Init()
+	return tea.Batch(m.client.Recv(), m.lobby.Init())
 }
 
 // Update implements tea.Model.
@@ -60,26 +58,147 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-	case screens.ConnectedMsg:
-		m.conn = msg.Conn
-		m.username = msg.Username
-		m.lobby = screens.NewLobbyModel(msg.Username, msg.Conn)
-		m.screen = screens.ScreenLobby
-		cmds := []tea.Cmd{m.listenWS()}
-		if msg.FirstMsg != nil {
-			updated, cmd := m.handleWSMsg(screens.WSMsg{Env: *msg.FirstMsg})
-			if um, ok := updated.(Model); ok {
-				m = um
-			}
-			if cmd != nil {
-				cmds = append(cmds, cmd)
+	case shared.LobbyState:
+		if m.lobby != nil {
+			m.lobby.SetState(msg)
+		}
+		return m, m.client.Recv()
+	case shared.GameStart:
+		var myColor chess.Color
+		switch m.user.Username {
+		case msg.White:
+			myColor = chess.White
+		case msg.Black:
+			myColor = chess.Black
+		default:
+			myColor = chess.NoColor
+		}
+		m.game = screens.NewGameModel(msg.GameID, msg.White, msg.Black, myColor, m.user.Username, msg.TimeControl)
+		m.screen = screens.ScreenGame
+		return m, tea.Batch(m.game.Init(), m.client.Recv())
+	case shared.MoveMsg:
+		if m.game != nil {
+			m.game.SetMovesWithClock(msg.Moves, msg.Clock)
+			if m.screen != screens.ScreenGame {
+				m.screen = screens.ScreenGame
 			}
 		}
-		return m, tea.Batch(cmds...)
+		return m, m.client.Recv()
+	case shared.GameOver:
+		if m.game != nil {
+			m.game.SetGameOver(msg.Result, msg.WhiteEloAfter, msg.BlackEloAfter)
+		}
+		return m, m.client.Recv()
+	case shared.UndoRequest:
+		if m.game != nil {
+			m.game.SetPendingUndoPrompt(true)
+		}
+		return m, m.client.Recv()
+	case shared.UndoResponse:
+		if m.game != nil && !msg.Accept {
+			m.game.ClearPendingUndo()
+		}
+		return m, m.client.Recv()
+	case shared.UndoAccepted:
+		if m.game != nil {
+			m.game.SetMoves(msg.Moves)
+		}
+		return m, m.client.Recv()
+	case shared.ErrorMsg:
+		updated, _ := m.updateActiveScreen(screens.ErrMsg{Err: errString(msg.Message)})
+		if um, ok := updated.(Model); ok {
+			m = um
+		}
+		return m, m.client.Recv()
 	case screens.ScreenChangeMsg:
 		return m.handleScreenChange(msg)
-	case screens.WSMsg:
-		return m.handleWSMsg(msg)
+	case screens.JoinGameMsg:
+		hub, client := m.hub, m.client
+		gameID := msg.GameID
+		return m, func() tea.Msg {
+			hub.JoinGame(context.Background(), client, gameID)
+			return nil
+		}
+	case screens.SpectateGameMsg:
+		hub, client := m.hub, m.client
+		gameID := msg.GameID
+		return m, func() tea.Msg {
+			hub.SpectateGame(context.Background(), client, gameID)
+			return nil
+		}
+	case screens.CreateGameMsg:
+		hub, client := m.hub, m.client
+		tc := msg.TimeControl
+		m.screen = screens.ScreenLobby
+		return m, func() tea.Msg {
+			hub.CreateGame(context.Background(), client, tc)
+			return nil
+		}
+	case screens.MakeMoveMsg:
+		hub, client := m.hub, m.client
+		san := msg.SAN
+		return m, func() tea.Msg {
+			hub.MakeMove(context.Background(), client, san)
+			return nil
+		}
+	case screens.ResignMsg:
+		hub, client := m.hub, m.client
+		return m, func() tea.Msg {
+			hub.Resign(context.Background(), client)
+			return nil
+		}
+	case screens.RequestUndoMsg:
+		hub, client := m.hub, m.client
+		return m, func() tea.Msg {
+			hub.RequestUndo(client)
+			return nil
+		}
+	case screens.RespondUndoMsg:
+		hub, client := m.hub, m.client
+		accept := msg.Accept
+		return m, func() tea.Msg {
+			hub.RespondUndo(context.Background(), client, accept)
+			return nil
+		}
+	case screens.SubmitPuzzleAttemptMsg:
+		hub := m.hub
+		username := m.user.Username
+		puzzleID, solved, skipped := msg.PuzzleID, msg.Solved, msg.Skipped
+		return m, func() tea.Msg {
+			newRating, err := hub.RecordPuzzleAttempt(context.Background(), username, puzzleID, solved, skipped)
+			if skipped {
+				return screens.ScreenChangeMsg{Screen: screens.ScreenPuzzle}
+			}
+			if err != nil {
+				return screens.PuzzleAttemptMsg{Err: err}
+			}
+			return screens.PuzzleAttemptMsg{NewRating: newRating}
+		}
+	case screens.CheckUsernamesActionMsg:
+		hub := m.hub
+		white, black := msg.White, msg.Black
+		return m, func() tea.Msg {
+			var unknown []string
+			for _, name := range []string{white, black} {
+				exists, err := hub.CheckUsername(context.Background(), name)
+				if err != nil {
+					return screens.ErrMsg{Err: err}
+				}
+				if !exists {
+					unknown = append(unknown, name)
+				}
+			}
+			return screens.UsernameCheckDoneMsg{Unknown: unknown}
+		}
+	case screens.SaveImportedActionMsg:
+		hub := m.hub
+		white, black, pgn, forceCreate := msg.White, msg.Black, msg.PGN, msg.ForceCreate
+		return m, func() tea.Msg {
+			if err := hub.SaveImportedGame(context.Background(), white, black, pgn, forceCreate); err != nil {
+				return screens.ErrMsg{Err: err}
+			}
+			return screens.SaveImportedDoneMsg{}
+		}
 	case historyLoadedMsg:
 		if m.history != nil {
 			m.history.SetGames(msg.records)
@@ -100,9 +219,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.puzzle.SetPuzzle(msg.record)
 		}
 		return m, nil
-	case screens.CreateGameMsg:
-		m.screen = screens.ScreenLobby
-		return m, m.sendCreateGame(msg.TimeControl)
 	case screens.ErrMsg:
 		// pass through to active screen
 	}
@@ -111,12 +227,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.screen {
-	case screens.ScreenLogin:
-		updated, cmd := m.login.Update(msg)
-		if lm, ok := updated.(*screens.LoginModel); ok {
-			m.login = lm
-		}
-		return m, cmd
 	case screens.ScreenLobby:
 		updated, cmd := m.lobby.Update(msg)
 		if lm, ok := updated.(*screens.LobbyModel); ok {
@@ -179,11 +289,11 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 	switch msg.Screen {
 	case screens.ScreenLobby:
 		if m.lobby == nil {
-			m.lobby = screens.NewLobbyModel(m.username, m.conn)
+			m.lobby = screens.NewLobbyModel(m.user.Username)
 		}
 		m.screen = screens.ScreenLobby
 	case screens.ScreenHistory:
-		m.history = screens.NewHistoryModel(m.username, m.conn)
+		m.history = screens.NewHistoryModel(m.user.Username)
 		m.screen = screens.ScreenHistory
 		return m, m.fetchHistory()
 	case screens.ScreenImport:
@@ -195,7 +305,6 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 		return m, m.fetchImportedGames()
 	case screens.ScreenReplay:
 		m.replay = screens.NewReplayModel()
-		m.replay.SetServerAddr(m.serverAddr)
 		switch d := msg.Data.(type) {
 		case shared.HistoryRecord:
 			if d.PGN != "" {
@@ -217,15 +326,14 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 		}
 		m.screen = screens.ScreenReplay
 	case screens.ScreenLeaderboard:
-		m.leaderboard = screens.NewLeaderboardModel(m.conn)
+		m.leaderboard = screens.NewLeaderboardModel()
 		m.screen = screens.ScreenLeaderboard
 		return m, m.fetchLeaderboard()
 	case screens.ScreenPuzzle:
-		m.puzzle = screens.NewPuzzleModel(m.serverAddr, m.username)
+		m.puzzle = screens.NewPuzzleModel(m.user.Username)
 		m.screen = screens.ScreenPuzzle
 		return m, m.fetchPuzzle()
 	case screens.ScreenGame:
-		// game screen is set up by game_start messages
 		m.screen = screens.ScreenGame
 	case screens.ScreenCreateGame:
 		m.createGame = screens.NewCreateGameModel()
@@ -234,83 +342,9 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 	return m, nil
 }
 
-func (m Model) handleWSMsg(msg screens.WSMsg) (tea.Model, tea.Cmd) {
-	env := msg.Env
-	switch env.Type {
-	case shared.MsgLobbyState:
-		var state shared.LobbyState
-		if err := json.Unmarshal(env.Payload, &state); err == nil && m.lobby != nil {
-			m.lobby.SetState(state)
-		}
-	case shared.MsgGameStart:
-		var payload shared.GameStart
-		if err := json.Unmarshal(env.Payload, &payload); err != nil {
-			return m, m.listenWS()
-		}
-		m.startGameFromMsg(payload)
-		return m, tea.Batch(m.listenWS(), m.game.Init())
-	case shared.MsgMove:
-		var payload shared.MoveMsg
-		if err := json.Unmarshal(env.Payload, &payload); err == nil && m.game != nil {
-			m.game.SetMovesWithClock(payload.Moves, payload.Clock)
-			if m.screen != screens.ScreenGame {
-				m.screen = screens.ScreenGame
-			}
-		}
-	case shared.MsgGameOver:
-		var payload shared.GameOver
-		if err := json.Unmarshal(env.Payload, &payload); err == nil && m.game != nil {
-			m.game.SetGameOver(payload.Result, payload.WhiteEloAfter, payload.BlackEloAfter)
-		}
-	case shared.MsgUndoRequest:
-		if m.game != nil {
-			m.game.SetPendingUndoPrompt(true)
-		}
-	case shared.MsgUndoResponse:
-		var payload shared.UndoResponse
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			if m.game != nil && !payload.Accept {
-				m.game.ClearPendingUndo()
-			}
-		}
-	case shared.MsgUndoAccepted:
-		var payload shared.UndoAccepted
-		if err := json.Unmarshal(env.Payload, &payload); err == nil && m.game != nil {
-			m.game.SetMoves(payload.Moves)
-		}
-	case shared.MsgError:
-		var payload shared.ErrorMsg
-		if err := json.Unmarshal(env.Payload, &payload); err == nil {
-			updated, _ := m.updateActiveScreen(screens.ErrMsg{Err: errString(payload.Message)})
-			if um, ok := updated.(Model); ok {
-				m = um
-			}
-		}
-	}
-	return m, m.listenWS()
-}
-
-// listenWS returns a Cmd that reads from the WebSocket and sends WSMsg.
-func (m Model) listenWS() tea.Cmd {
-	conn := m.conn
-	return func() tea.Msg {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			return screens.ErrMsg{Err: err}
-		}
-		env, err := shared.Decode(msg)
-		if err != nil {
-			return screens.ErrMsg{Err: err}
-		}
-		return screens.WSMsg{Env: env}
-	}
-}
-
 // View implements tea.Model.
 func (m Model) View() string {
 	switch m.screen {
-	case screens.ScreenLogin:
-		return m.login.View()
 	case screens.ScreenLobby:
 		if m.lobby != nil {
 			return m.lobby.View()
@@ -355,97 +389,79 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
-func (m *Model) fetchHistory() tea.Cmd {
+func (m Model) fetchHistory() tea.Cmd {
+	hub := m.hub
+	username := m.user.Username
 	return func() tea.Msg {
-		url := "http://" + m.serverAddr + "/history?user=" + m.username
-		resp, err := http.Get(url)
+		records, err := hub.GetHistory(context.Background(), username)
 		if err != nil {
 			return screens.ErrMsg{Err: err}
 		}
-		defer resp.Body.Close()
-		var records []shared.HistoryRecord
-		if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
-			return screens.ErrMsg{Err: err}
-		}
-		return historyLoadedMsg{records: records}
+		return historyLoadedMsg{records: toSharedHistoryRecords(records)}
 	}
 }
 
-func (m *Model) fetchImportedGames() tea.Cmd {
+func (m Model) fetchLeaderboard() tea.Cmd {
+	hub := m.hub
 	return func() tea.Msg {
-		resp, err := http.Get("http://" + m.serverAddr + "/imported-games")
+		users, err := hub.GetLeaderboard(context.Background())
 		if err != nil {
 			return screens.ErrMsg{Err: err}
 		}
-		defer resp.Body.Close()
-		var records []shared.HistoryRecord
-		if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
-			return screens.ErrMsg{Err: err}
-		}
-		return importedGamesLoadedMsg{records: records}
+		return leaderboardLoadedMsg{players: toSharedPlayers(users)}
 	}
 }
 
-func (m *Model) fetchLeaderboard() tea.Cmd {
+func (m Model) fetchPuzzle() tea.Cmd {
+	hub := m.hub
+	username := m.user.Username
 	return func() tea.Msg {
-		url := "http://" + m.serverAddr + "/leaderboard"
-		resp, err := http.Get(url)
+		p, err := hub.GetPuzzle(context.Background(), username)
 		if err != nil {
 			return screens.ErrMsg{Err: err}
 		}
-		defer resp.Body.Close()
-		var players []shared.PlayerInfo
-		if err := json.NewDecoder(resp.Body).Decode(&players); err != nil {
-			return screens.ErrMsg{Err: err}
+		if p == nil {
+			return screens.ErrMsg{Err: errString("no puzzles available")}
 		}
-		return leaderboardLoadedMsg{players: players}
+		return puzzleLoadedMsg{record: *p}
 	}
 }
 
-func (m *Model) fetchPuzzle() tea.Cmd {
+func (m Model) fetchImportedGames() tea.Cmd {
+	hub := m.hub
 	return func() tea.Msg {
-		url := "http://" + m.serverAddr + "/puzzle?user=" + m.username
-		resp, err := http.Get(url)
-		if err != nil {
-			return screens.ErrMsg{Err: fmt.Errorf("fetch puzzle: %w", err)}
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return screens.ErrMsg{Err: fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))}
-		}
-		var record shared.PuzzleRecord
-		if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
-			return screens.ErrMsg{Err: fmt.Errorf("decode puzzle response: %w", err)}
-		}
-		return puzzleLoadedMsg{record: record}
-	}
-}
-
-func (m *Model) sendCreateGame(tc shared.TimeControl) tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgCreateGame, shared.CreateGame{TimeControl: tc})
+		records, err := hub.GetImportedGames(context.Background())
 		if err != nil {
 			return screens.ErrMsg{Err: err}
 		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return screens.ErrMsg{Err: err}
-		}
-		return nil
+		return importedGamesLoadedMsg{records: toSharedHistoryRecords(records)}
 	}
 }
 
-// startGameFromMsg creates a new GameModel when the server notifies of a game start.
-func (m *Model) startGameFromMsg(payload shared.GameStart) {
-	var myColor chess.Color
-	switch m.username {
-	case payload.White:
-		myColor = chess.White
-	case payload.Black:
-		myColor = chess.Black
-	default:
-		myColor = chess.NoColor
+func toSharedHistoryRecords(records []server.HistoryRecord) []shared.HistoryRecord {
+	result := make([]shared.HistoryRecord, len(records))
+	for i, r := range records {
+		result[i] = shared.HistoryRecord{
+			ID:             r.ID,
+			White:          r.White,
+			Black:          r.Black,
+			Result:         r.Result,
+			WhiteEloBefore: r.WhiteEloBefore,
+			BlackEloBefore: r.BlackEloBefore,
+			WhiteEloAfter:  r.WhiteEloAfter,
+			BlackEloAfter:  r.BlackEloAfter,
+			PGN:            r.PGN,
+			PlayedAt:       r.PlayedAt,
+			Imported:       r.Imported,
+		}
 	}
-	m.game = screens.NewGameModel(payload.GameID, payload.White, payload.Black, myColor, m.conn, m.username, payload.TimeControl)
-	m.screen = screens.ScreenGame
+	return result
+}
+
+func toSharedPlayers(users []server.User) []shared.PlayerInfo {
+	result := make([]shared.PlayerInfo, len(users))
+	for i, u := range users {
+		result[i] = shared.PlayerInfo{Username: u.Username, Elo: u.Elo, Online: true}
+	}
+	return result
 }

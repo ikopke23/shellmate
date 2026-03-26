@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/gorilla/websocket"
 	"github.com/ikopke/shellmate/internal/shared"
 )
 
@@ -23,17 +22,13 @@ type HistoryModel struct {
 	games     []shared.HistoryRecord
 	cursor    int
 	username  string
-	conn      *websocket.Conn
 	exportMsg string
 	err       string
 }
 
 // NewHistoryModel creates a new history screen.
-func NewHistoryModel(username string, conn *websocket.Conn) *HistoryModel {
-	return &HistoryModel{
-		username: username,
-		conn:     conn,
-	}
+func NewHistoryModel(username string) *HistoryModel {
+	return &HistoryModel{username: username}
 }
 
 // SetGames sets the game history records.

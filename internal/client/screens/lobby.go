@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/gorilla/websocket"
 	"github.com/ikopke/shellmate/internal/shared"
 )
 
@@ -34,16 +33,12 @@ type LobbyModel struct {
 	games    []shared.GameInfo
 	cursor   int
 	username string
-	conn     *websocket.Conn
 	err      string
 }
 
 // NewLobbyModel creates a new lobby screen.
-func NewLobbyModel(username string, conn *websocket.Conn) *LobbyModel {
-	return &LobbyModel{
-		username: username,
-		conn:     conn,
-	}
+func NewLobbyModel(username string) *LobbyModel {
+	return &LobbyModel{username: username}
 }
 
 // SetState updates players and games from a LobbyState message.
@@ -104,16 +99,7 @@ func (m *LobbyModel) joinGame() tea.Cmd {
 		return nil
 	}
 	gameID := m.games[m.cursor].ID
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgJoinGame, shared.JoinGame{GameID: gameID})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return JoinGameMsg{GameID: gameID} }
 }
 
 func (m *LobbyModel) spectateGame() tea.Cmd {
@@ -121,16 +107,7 @@ func (m *LobbyModel) spectateGame() tea.Cmd {
 		return nil
 	}
 	gameID := m.games[m.cursor].ID
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgSpectateGame, shared.SpectateGame{GameID: gameID})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return SpectateGameMsg{GameID: gameID} }
 }
 
 // View implements tea.Model.
