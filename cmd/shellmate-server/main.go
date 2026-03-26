@@ -29,6 +29,9 @@ func newTeaHandler(hub *server.Hub) bm.Handler {
 		if !active {
 			return nil, nil
 		}
+		if s.PublicKey() == nil {
+			return nil, nil
+		}
 		fingerprint := gossh.FingerprintSHA256(s.PublicKey())
 		ctx := s.Context()
 		w, h := pty.Window.Width, pty.Window.Height
@@ -101,6 +104,7 @@ func main() {
 	s, err := wish.NewServer(
 		wish.WithAddress(sshPort),
 		wish.WithHostKeyPath(".ssh/shellmate_host_key"),
+		wish.WithPublicKeyAuth(func(_ ssh.Context, _ ssh.PublicKey) bool { return true }),
 		wish.WithMiddleware(
 			bm.Middleware(newTeaHandler(hub)),
 			logging.Middleware(),
