@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/gorilla/websocket"
 	"github.com/ikopke/shellmate/internal/client/render"
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
@@ -36,6 +35,8 @@ func formatMs(ms int) string {
 
 type clockTickMsg time.Time
 
+type clearClipboardMsg struct{}
+
 func clockTick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return clockTickMsg(t) })
 }
@@ -51,7 +52,6 @@ type GameModel struct {
 	myColor           chess.Color
 	input             *LocalMoveInput
 	statusMsg         string
-	conn              *websocket.Conn
 	username          string
 	gameOver          bool
 	result            string
@@ -59,6 +59,7 @@ type GameModel struct {
 	pendingUndo       bool
 	pendingUndoPrompt bool
 	err               string
+	clipboardSeq      string
 	viewIdx           int
 	timed             bool
 	whiteMs           int
@@ -66,7 +67,7 @@ type GameModel struct {
 }
 
 // NewGameModel creates a new game screen.
-func NewGameModel(gameID, white, black string, myColor chess.Color, conn *websocket.Conn, username string, tc shared.TimeControl) *GameModel {
+func NewGameModel(gameID, white, black string, myColor chess.Color, username string, tc shared.TimeControl) *GameModel {
 	g := chess.NewGame()
 	flipped := myColor == chess.Black
 	return &GameModel{
@@ -78,7 +79,6 @@ func NewGameModel(gameID, white, black string, myColor chess.Color, conn *websoc
 		chess:    g,
 		myColor:  myColor,
 		input:    NewLocalMoveInput(myColor == chess.Black),
-		conn:     conn,
 		username: username,
 		timed:    tc.InitialSeconds > 0,
 		whiteMs:  tc.InitialSeconds * 1000,
@@ -102,6 +102,7 @@ func (m *GameModel) ApplyMove(san string) {
 		m.board.SetPosition(positions[len(positions)-1], from, to)
 	}
 	m.moveList.SetMoves(m.moves, len(m.moves)-1)
+	updateCheckHighlight(m.chess, m.board)
 }
 
 // SetMoves replaces the full move list (used after undo).
@@ -126,6 +127,7 @@ func (m *GameModel) SetMoves(moves []string) {
 	idx := len(m.moves) - 1
 	m.moveList.SetMoves(m.moves, idx)
 	m.viewIdx = len(m.moves)
+	updateCheckHighlight(m.chess, m.board)
 }
 
 // SetMovesWithClock replaces the full move list and updates clock state from server.
@@ -150,6 +152,7 @@ func (m *GameModel) renderAtViewIdx() {
 			m.board.ClearHighlight()
 		}
 		m.moveList.SetMoves(m.moves, len(m.moves)-1)
+		updateCheckHighlight(m.chess, m.board)
 		return
 	}
 	g := chess.NewGame()
@@ -166,6 +169,22 @@ func (m *GameModel) renderAtViewIdx() {
 		m.board.ClearHighlight()
 	}
 	m.moveList.SetMoves(m.moves, m.viewIdx-1)
+	updateCheckHighlight(g, m.board)
+}
+
+func updateCheckHighlight(g *chess.Game, b *render.Board) {
+	moves := g.Moves()
+	if len(moves) == 0 || !moves[len(moves)-1].HasTag(chess.Check) {
+		b.ClearCheck()
+		return
+	}
+	turn := g.Position().Turn()
+	for sq, p := range g.Position().Board().SquareMap() {
+		if p.Type() == chess.King && p.Color() == turn {
+			b.SetCheck(sq)
+			return
+		}
+	}
 }
 
 // SetGameOver marks the game as over and shows the result.
@@ -247,12 +266,10 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.sendResign()
 		case "ctrl+e":
-			path, err := exportPGN(m.white, m.black, time.Now(), m.chess.String())
-			if err != nil {
-				m.statusMsg = fmt.Sprintf("export error: %s", err)
-			} else {
-				m.statusMsg = fmt.Sprintf("exported: %s", path)
-			}
+			osc, filename := pgnClipboardOSC(m.white, m.black, time.Now(), m.chess.String())
+			m.clipboardSeq = osc
+			m.statusMsg = fmt.Sprintf("copied to clipboard: %s", filename)
+			return m, func() tea.Msg { return clearClipboardMsg{} }
 		case "[":
 			rows := m.board.CellRows()
 			if rows > 2 {
@@ -290,60 +307,27 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ErrMsg:
 		m.err = msg.Err.Error()
 		return m, nil
+	case clearClipboardMsg:
+		m.clipboardSeq = ""
+		return m, nil
 	}
 	return m, nil
 }
 
 func (m *GameModel) sendMoveStr(san string) tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgMove, shared.Move{GameID: m.gameID, SAN: san})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return MakeMoveMsg{SAN: san} }
 }
 
 func (m *GameModel) sendUndo() tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgUndoRequest, shared.UndoRequest{GameID: m.gameID})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return RequestUndoMsg{} }
 }
 
 func (m *GameModel) sendResign() tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgResign, shared.Resign{GameID: m.gameID})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return ResignMsg{} }
 }
 
 func (m *GameModel) sendUndoResponse(accept bool) tea.Cmd {
-	return func() tea.Msg {
-		data, err := shared.Encode(shared.MsgUndoResponse, shared.UndoResponse{GameID: m.gameID, Accept: accept})
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		if err := m.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return ErrMsg{Err: err}
-		}
-		return nil
-	}
+	return func() tea.Msg { return RespondUndoMsg{Accept: accept} }
 }
 
 // View implements tea.Model.
@@ -422,5 +406,5 @@ func (m *GameModel) View() string {
 	}
 	sb.WriteString(gameHelpStyle.Render(help))
 	sb.WriteString("\n")
-	return sb.String()
+	return m.clipboardSeq + sb.String()
 }

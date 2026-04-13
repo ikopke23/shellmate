@@ -22,7 +22,7 @@ func setupPuzzleModel(t *testing.T) *PuzzleModel {
 		Themes:           []string{"opening"},
 		UserPuzzleRating: 1500,
 	}
-	m := NewPuzzleModel("localhost:8080", "testuser")
+	m := NewPuzzleModel("testuser")
 	m.SetPuzzle(record)
 	return m
 }
@@ -114,7 +114,7 @@ func setupMultiMovePuzzle(t *testing.T) *PuzzleModel {
 		Rating:           1500,
 		UserPuzzleRating: 1500,
 	}
-	m := NewPuzzleModel("localhost:8080", "testuser")
+	m := NewPuzzleModel("testuser")
 	m.SetPuzzle(record)
 	return m
 }
@@ -146,7 +146,7 @@ func TestEngineResponseCompletesOnLastMove(t *testing.T) {
 		Rating:           1500,
 		UserPuzzleRating: 1500,
 	}
-	m := NewPuzzleModel("localhost:8080", "testuser")
+	m := NewPuzzleModel("testuser")
 	m.SetPuzzle(record)
 	ok, engineUCI := m.validateAndApply("d5")
 	if !ok {
@@ -177,7 +177,7 @@ func TestInitGameNoFlipForWhite(t *testing.T) {
 		Rating:           1500,
 		UserPuzzleRating: 1500,
 	}
-	m := NewPuzzleModel("localhost:8080", "testuser")
+	m := NewPuzzleModel("testuser")
 	m.SetPuzzle(record)
 	if m.board.Flipped() {
 		t.Error("board should NOT be flipped for white-to-move puzzle")

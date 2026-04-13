@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/gorilla/websocket"
 	"github.com/ikopke/shellmate/internal/shared"
 )
 
@@ -18,13 +17,12 @@ var (
 // LeaderboardModel shows ranked leaderboard of all players.
 type LeaderboardModel struct {
 	players []shared.PlayerInfo
-	conn    *websocket.Conn
 	err     string
 }
 
 // NewLeaderboardModel creates a new leaderboard screen.
-func NewLeaderboardModel(conn *websocket.Conn) *LeaderboardModel {
-	return &LeaderboardModel{conn: conn}
+func NewLeaderboardModel() *LeaderboardModel {
+	return &LeaderboardModel{}
 }
 
 // SetPlayers sets the leaderboard data.

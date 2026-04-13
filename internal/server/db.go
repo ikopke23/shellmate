@@ -110,6 +110,57 @@ func (d *DB) GetUser(ctx context.Context, username string) (*User, error) {
 	return u, nil
 }
 
+// GetUserByKeyFingerprint returns the user linked to the given SSH key fingerprint,
+// or nil, nil if no such key exists.
+func (d *DB) GetUserByKeyFingerprint(ctx context.Context, fingerprint string) (*User, error) {
+	u := &User{}
+	err := d.pool.QueryRow(ctx,
+		`SELECT u.id, u.username, u.elo, u.games_played
+		 FROM user_ssh_keys k
+		 JOIN users u ON u.username = k.username
+		 WHERE k.fingerprint = $1`,
+		fingerprint,
+	).Scan(&u.ID, &u.Username, &u.Elo, &u.GamesPlayed)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return u, nil
+}
+
+// CreateUserWithKey inserts a new user and links the SSH key fingerprint atomically.
+func (d *DB) CreateUserWithKey(ctx context.Context, username, fingerprint string) (*User, error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users (username) VALUES ($1)`, username); err != nil {
+		return nil, err
+	}
+	if _, err = tx.Exec(ctx,
+		`INSERT INTO user_ssh_keys (username, fingerprint) VALUES ($1, $2)`,
+		username, fingerprint,
+	); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return d.GetUser(ctx, username)
+}
+
+// LinkKeyToUser adds an SSH key fingerprint to an existing user's account.
+func (d *DB) LinkKeyToUser(ctx context.Context, username, fingerprint string) error {
+	_, err := d.pool.Exec(ctx,
+		`INSERT INTO user_ssh_keys (username, fingerprint) VALUES ($1, $2)`,
+		username, fingerprint,
+	)
+	return err
+}
+
 // SaveGameAndUpdateElo atomically inserts a completed game and updates both players' elo and games_played.
 func (d *DB) SaveGameAndUpdateElo(ctx context.Context, g GameRecord, whiteElo, blackElo int) error {
 	tx, err := d.pool.Begin(ctx)

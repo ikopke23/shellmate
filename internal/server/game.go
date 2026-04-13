@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ikopke/shellmate/internal/shared"
 	"github.com/notnil/chess"
 )
@@ -17,18 +18,20 @@ var ErrTimeExpired = errors.New("time expired")
 
 // Game tracks an active chess game in memory.
 type Game struct {
-	id             string
-	white          *Client
-	black          *Client
-	spectators     []*Client
-	chess          *chess.Game
-	mu             sync.Mutex
-	pendingUndo    string // username who requested undo, or ""
-	timed          bool
-	whiteRemaining time.Duration
-	blackRemaining time.Duration
-	turnStartedAt  time.Time
-	increment      time.Duration
+	id              string
+	white           *Client
+	black           *Client
+	spectators      []*Client
+	chess           *chess.Game
+	mu              sync.Mutex
+	pendingUndo     string // username who requested undo, or ""
+	timed           bool
+	whiteRemaining  time.Duration
+	blackRemaining  time.Duration
+	turnStartedAt   time.Time
+	increment       time.Duration
+	clockTimer      *time.Timer
+	clockGeneration uint64
 }
 
 // NewGame creates a new game. initialSec==0 means untimed.
@@ -182,13 +185,13 @@ func (g *Game) PGN() string {
 }
 
 // Broadcast sends a message to both players and all spectators.
-func (g *Game) Broadcast(msg []byte) {
+func (g *Game) Broadcast(msg tea.Msg) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.broadcastLocked(msg)
 }
 
-func (g *Game) broadcastLocked(msg []byte) {
+func (g *Game) broadcastLocked(msg tea.Msg) {
 	if g.white != nil {
 		g.white.Send(msg)
 	}
@@ -211,20 +214,14 @@ func (g *Game) BroadcastMove() {
 	for i, m := range moves {
 		moveList = append(moveList, notation.Encode(positions[i], m))
 	}
-	clock := shared.ClockState{
-		WhiteMs: int(g.whiteRemaining.Milliseconds()),
-		BlackMs: int(g.blackRemaining.Milliseconds()),
-	}
-	data, err := shared.Encode(shared.MsgMove, shared.MoveMsg{
+	g.broadcastLocked(shared.MoveMsg{
 		GameID: g.id,
 		Moves:  moveList,
-		Clock:  clock,
+		Clock: shared.ClockState{
+			WhiteMs: int(g.whiteRemaining.Milliseconds()),
+			BlackMs: int(g.blackRemaining.Milliseconds()),
+		},
 	})
-	if err != nil {
-		slog.Error("failed to encode move broadcast", "error", err)
-		return
-	}
-	g.broadcastLocked(data)
 }
 
 // CurrentClockState returns the current clock state (for spectate catch-up).
@@ -255,12 +252,7 @@ func (g *Game) BroadcastUndoAccepted() {
 	for i, m := range moves {
 		moveList = append(moveList, notation.Encode(positions[i], m))
 	}
-	data, err := shared.Encode(shared.MsgUndoAccepted, shared.UndoAccepted{GameID: g.id, Moves: moveList})
-	if err != nil {
-		slog.Error("failed to encode undo_accepted broadcast", "error", err)
-		return
-	}
-	g.broadcastLocked(data)
+	g.broadcastLocked(shared.UndoAccepted{GameID: g.id, Moves: moveList})
 }
 
 // IsOver returns true if the game has ended (outcome != "*").
@@ -268,6 +260,53 @@ func (g *Game) IsOver() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.chess.Outcome() != chess.NoOutcome
+}
+
+func (g *Game) resetClock(hub *Hub) {
+	g.mu.Lock()
+	if g.clockTimer != nil {
+		g.clockTimer.Stop()
+	}
+	g.clockGeneration++
+	gen := g.clockGeneration
+	turn := g.chess.Position().Turn()
+	remaining := g.whiteRemaining
+	if turn == chess.Black {
+		remaining = g.blackRemaining
+	}
+	g.clockTimer = time.AfterFunc(remaining, func() {
+		g.flagPlayer(hub, turn, gen)
+	})
+	g.mu.Unlock()
+}
+
+func (g *Game) stopClock() {
+	g.mu.Lock()
+	if g.clockTimer != nil {
+		g.clockTimer.Stop()
+		g.clockTimer = nil
+	}
+	g.mu.Unlock()
+}
+
+func (g *Game) flagPlayer(hub *Hub, loser chess.Color, gen uint64) {
+	g.mu.Lock()
+	if g.clockGeneration != gen || g.chess.Outcome() != chess.NoOutcome {
+		g.mu.Unlock()
+		return
+	}
+	g.chess.Resign(loser)
+	g.mu.Unlock()
+	hub.mu.Lock()
+	_, exists := hub.games[g.id]
+	if exists {
+		delete(hub.games, g.id)
+	}
+	hub.mu.Unlock()
+	if exists {
+		g.handleGameOver(context.Background(), hub)
+		hub.BroadcastLobby(context.Background())
+	}
 }
 
 // handleGameOver processes Elo changes and persists the game result.
@@ -314,7 +353,7 @@ func (g *Game) handleGameOver(ctx context.Context, hub *Hub) {
 		slog.Error("failed to save game", "error", err)
 		return
 	}
-	overMsg, err := shared.Encode(shared.MsgGameOver, shared.GameOver{
+	g.Broadcast(shared.GameOver{
 		GameID:         g.id,
 		Result:         string(outcome),
 		WhiteEloBefore: whiteUser.Elo,
@@ -324,9 +363,4 @@ func (g *Game) handleGameOver(ctx context.Context, hub *Hub) {
 		WhiteUsername:  g.white.username,
 		BlackUsername:  g.black.username,
 	})
-	if err != nil {
-		slog.Error("failed to encode game_over", "error", err)
-		return
-	}
-	g.Broadcast(overMsg)
 }

@@ -1,10 +1,7 @@
 package screens
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -15,9 +12,6 @@ import (
 	"github.com/notnil/chess"
 )
 
-type usernameCheckDoneMsg struct{ unknown []string }
-type saveImportedDoneMsg struct{}
-
 var (
 	replayTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).Padding(0, 1)
 	replayHelpStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
@@ -26,24 +20,24 @@ var (
 
 // ReplayModel provides step-through replay of a past game.
 type ReplayModel struct {
-	pgn       string
-	white     string
-	black     string
-	playedAt  time.Time
-	game      *chess.Game
-	moves     []*chess.Move
-	positions []*chess.Position
-	sanMoves  []string
-	stepIdx   int // current step (0 = start, len(moves) = end)
-	board     *render.Board
-	moveList  *render.MoveList
-	exportMsg string
-	err       string
+	pgn          string
+	white        string
+	black        string
+	playedAt     time.Time
+	game         *chess.Game
+	moves        []*chess.Move
+	positions    []*chess.Position
+	sanMoves     []string
+	stepIdx      int // current step (0 = start, len(moves) = end)
+	board        *render.Board
+	moveList     *render.MoveList
+	exportMsg    string
+	clipboardSeq string
+	err          string
 	// navigation
 	backScreen ScreenID
 	moveListX  int // X start of move list on screen, computed in View()
 	moveListY  int // Y of first move row, computed in View()
-	serverAddr string
 	// branch mode
 	branchMode      bool
 	branchPointIdx  int               // stepIdx when branch was entered
@@ -74,11 +68,6 @@ func NewReplayModel() *ReplayModel {
 // SetBackScreen sets the screen to return to when the user exits replay.
 func (m *ReplayModel) SetBackScreen(s ScreenID) {
 	m.backScreen = s
-}
-
-// SetServerAddr sets the server address for HTTP calls (save-imported, check-username).
-func (m *ReplayModel) SetServerAddr(addr string) {
-	m.serverAddr = addr
 }
 
 // LoadPGN parses a PGN string and sets up the replay.
@@ -119,6 +108,18 @@ func (m *ReplayModel) updateView() {
 		mv := m.moves[m.stepIdx-1]
 		m.board.SetPosition(m.positions[m.stepIdx], mv.S1(), mv.S2())
 		m.moveList.SetMoves(m.sanMoves, m.stepIdx-1)
+	}
+	if m.stepIdx > 0 && m.moves[m.stepIdx-1].HasTag(chess.Check) {
+		pos := m.positions[m.stepIdx]
+		turn := pos.Turn()
+		for sq, p := range pos.Board().SquareMap() {
+			if p.Type() == chess.King && p.Color() == turn {
+				m.board.SetCheck(sq)
+				break
+			}
+		}
+	} else {
+		m.board.ClearCheck()
 	}
 }
 
@@ -213,6 +214,9 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ErrMsg:
 		m.err = msg.Err.Error()
 		return m, nil
+	case clearClipboardMsg:
+		m.clipboardSeq = ""
+		return m, nil
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			if m.branchMode && m.atBranchTip() {
@@ -246,15 +250,15 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case usernameCheckDoneMsg:
-		if len(msg.unknown) == 0 {
+	case UsernameCheckDoneMsg:
+		if len(msg.Unknown) == 0 {
 			return m, m.doSave(false)
 		}
-		m.saveUnknownNames = msg.unknown
+		m.saveUnknownNames = msg.Unknown
 		m.saveConfirmIdx = 0
 		m.saveStep = 2
 		return m, nil
-	case saveImportedDoneMsg:
+	case SaveImportedDoneMsg:
 		m.savePromptActive = false
 		m.saveMsg = "game saved"
 		return m, nil
@@ -327,12 +331,10 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.enterBranch()
 			}
 		case "e":
-			path, err := exportPGN(m.white, m.black, m.playedAt, m.pgn)
-			if err != nil {
-				m.exportMsg = fmt.Sprintf("export error: %s", err)
-			} else {
-				m.exportMsg = fmt.Sprintf("exported: %s", path)
-			}
+			osc, filename := pgnClipboardOSC(m.white, m.black, m.playedAt, m.pgn)
+			m.clipboardSeq = osc
+			m.exportMsg = fmt.Sprintf("copied to clipboard: %s", filename)
+			return m, func() tea.Msg { return clearClipboardMsg{} }
 		}
 	}
 	return m, nil
@@ -405,7 +407,7 @@ func (m *ReplayModel) View() string {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
 		sb.WriteString("\n")
 	}
-	return sb.String()
+	return m.clipboardSeq + sb.String()
 }
 
 func stepInfo(current, total int) string {
@@ -463,52 +465,15 @@ func (m *ReplayModel) updateSavePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *ReplayModel) checkUsernames() tea.Cmd {
 	white := strings.TrimSpace(m.saveWhiteInput.Value())
 	black := strings.TrimSpace(m.saveBlackInput.Value())
-	addr := m.serverAddr
-	return func() tea.Msg {
-		var unknown []string
-		for _, name := range []string{white, black} {
-			resp, err := http.Get("http://" + addr + "/check-username?name=" + name)
-			if err != nil {
-				return ErrMsg{Err: err}
-			}
-			var result struct {
-				Exists bool `json:"exists"`
-			}
-			decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-			resp.Body.Close()
-			if decodeErr != nil {
-				return ErrMsg{Err: decodeErr}
-			}
-			if !result.Exists {
-				unknown = append(unknown, name)
-			}
-		}
-		return usernameCheckDoneMsg{unknown: unknown}
-	}
+	return func() tea.Msg { return CheckUsernamesActionMsg{White: white, Black: black} }
 }
 
 func (m *ReplayModel) doSave(forceCreate bool) tea.Cmd {
 	white := strings.TrimSpace(m.saveWhiteInput.Value())
 	black := strings.TrimSpace(m.saveBlackInput.Value())
 	pgn := m.buildBranchPGN()
-	addr := m.serverAddr
 	return func() tea.Msg {
-		body := struct {
-			White       string `json:"white"`
-			Black       string `json:"black"`
-			PGN         string `json:"pgn"`
-			ForceCreate bool   `json:"force_create"`
-		}{white, black, pgn, forceCreate}
-		data, _ := json.Marshal(body)
-		resp, err := http.Post("http://"+addr+"/save-imported", "application/json", bytes.NewReader(data))
-		if err != nil {
-			return ErrMsg{Err: err}
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusNoContent {
-			return ErrMsg{Err: fmt.Errorf("server returned %d", resp.StatusCode)}
-		}
-		return saveImportedDoneMsg{}
+		return SaveImportedActionMsg{White: white, Black: black, PGN: pgn, ForceCreate: forceCreate}
 	}
 }
 

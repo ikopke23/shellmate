@@ -123,10 +123,11 @@ func RenderCell(p chess.Piece, bgHex string, cols, rows int) []string {
 	var lines []string
 	if err == nil {
 		rendered := ai.Render()
-		for _, l := range strings.Split(rendered, "\n") {
-			if l != "" {
-				lines = append(lines, l)
-			}
+		allLines := strings.Split(rendered, "\n")
+		// ansimage's NoDithering join collapses the never-set rows[0]="", so allLines[0] is the top
+		// content row. Take exactly the first `rows` lines; the trailing "" is excluded by the bound.
+		if len(allLines) >= rows {
+			lines = append(lines, allLines[0:rows]...)
 		}
 	}
 	for len(lines) < rows {
