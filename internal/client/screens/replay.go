@@ -20,19 +20,20 @@ var (
 
 // ReplayModel provides step-through replay of a past game.
 type ReplayModel struct {
-	pgn       string
-	white     string
-	black     string
-	playedAt  time.Time
-	game      *chess.Game
-	moves     []*chess.Move
-	positions []*chess.Position
-	sanMoves  []string
-	stepIdx   int // current step (0 = start, len(moves) = end)
-	board     *render.Board
-	moveList  *render.MoveList
-	exportMsg string
-	err       string
+	pgn          string
+	white        string
+	black        string
+	playedAt     time.Time
+	game         *chess.Game
+	moves        []*chess.Move
+	positions    []*chess.Position
+	sanMoves     []string
+	stepIdx      int // current step (0 = start, len(moves) = end)
+	board        *render.Board
+	moveList     *render.MoveList
+	exportMsg    string
+	clipboardSeq string
+	err          string
 	// navigation
 	backScreen ScreenID
 	moveListX  int // X start of move list on screen, computed in View()
@@ -107,6 +108,18 @@ func (m *ReplayModel) updateView() {
 		mv := m.moves[m.stepIdx-1]
 		m.board.SetPosition(m.positions[m.stepIdx], mv.S1(), mv.S2())
 		m.moveList.SetMoves(m.sanMoves, m.stepIdx-1)
+	}
+	if m.stepIdx > 0 && m.moves[m.stepIdx-1].HasTag(chess.Check) {
+		pos := m.positions[m.stepIdx]
+		turn := pos.Turn()
+		for sq, p := range pos.Board().SquareMap() {
+			if p.Type() == chess.King && p.Color() == turn {
+				m.board.SetCheck(sq)
+				break
+			}
+		}
+	} else {
+		m.board.ClearCheck()
 	}
 }
 
@@ -200,6 +213,9 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case ErrMsg:
 		m.err = msg.Err.Error()
+		return m, nil
+	case clearClipboardMsg:
+		m.clipboardSeq = ""
 		return m, nil
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
@@ -315,12 +331,10 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.enterBranch()
 			}
 		case "e":
-			path, err := exportPGN(m.white, m.black, m.playedAt, m.pgn)
-			if err != nil {
-				m.exportMsg = fmt.Sprintf("export error: %s", err)
-			} else {
-				m.exportMsg = fmt.Sprintf("exported: %s", path)
-			}
+			osc, filename := pgnClipboardOSC(m.white, m.black, m.playedAt, m.pgn)
+			m.clipboardSeq = osc
+			m.exportMsg = fmt.Sprintf("copied to clipboard: %s", filename)
+			return m, func() tea.Msg { return clearClipboardMsg{} }
 		}
 	}
 	return m, nil
@@ -393,7 +407,7 @@ func (m *ReplayModel) View() string {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(m.err))
 		sb.WriteString("\n")
 	}
-	return sb.String()
+	return m.clipboardSeq + sb.String()
 }
 
 func stepInfo(current, total int) string {
@@ -458,7 +472,9 @@ func (m *ReplayModel) doSave(forceCreate bool) tea.Cmd {
 	white := strings.TrimSpace(m.saveWhiteInput.Value())
 	black := strings.TrimSpace(m.saveBlackInput.Value())
 	pgn := m.buildBranchPGN()
-	return func() tea.Msg { return SaveImportedActionMsg{White: white, Black: black, PGN: pgn, ForceCreate: forceCreate} }
+	return func() tea.Msg {
+		return SaveImportedActionMsg{White: white, Black: black, PGN: pgn, ForceCreate: forceCreate}
+	}
 }
 
 func (m *ReplayModel) buildBranchPGN() string {

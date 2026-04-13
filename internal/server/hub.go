@@ -363,6 +363,9 @@ func (h *Hub) JoinGame(ctx context.Context, c *Client, gameID string) {
 	}
 	g.mu.Unlock()
 	h.mu.Unlock()
+	if g.timed {
+		g.resetClock(h)
+	}
 	slog.Info("player joined game", "game_id", gameID, "black", c.username)
 	go h.closeOpenGamesForUsers(ctx, whiteUsername, c.username, gameID)
 	g.Broadcast(shared.GameStart{
@@ -464,6 +467,7 @@ func (h *Hub) MakeMove(ctx context.Context, c *Client, san string) {
 	}
 	if err := g.ApplyMove(c, san); err != nil {
 		if errors.Is(err, ErrTimeExpired) {
+			g.stopClock()
 			h.mu.Lock()
 			_, stillExists := h.games[c.game]
 			if stillExists {
@@ -481,6 +485,7 @@ func (h *Hub) MakeMove(ctx context.Context, c *Client, san string) {
 	}
 	g.BroadcastMove()
 	if g.IsOver() {
+		g.stopClock()
 		h.mu.Lock()
 		_, stillExists := h.games[c.game]
 		if stillExists {
@@ -491,6 +496,8 @@ func (h *Hub) MakeMove(ctx context.Context, c *Client, san string) {
 			g.handleGameOver(ctx, h)
 			h.BroadcastLobby(ctx)
 		}
+	} else if g.timed {
+		g.resetClock(h)
 	}
 }
 
@@ -572,6 +579,7 @@ func (h *Hub) Resign(ctx context.Context, c *Client) {
 	}
 	g.chess.Resign(resignColor)
 	g.mu.Unlock()
+	g.stopClock()
 	h.mu.Lock()
 	_, stillExists := h.games[c.game]
 	if stillExists {

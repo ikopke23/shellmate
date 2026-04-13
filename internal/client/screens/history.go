@@ -19,11 +19,12 @@ var (
 
 // HistoryModel shows past games for the logged-in user.
 type HistoryModel struct {
-	games     []shared.HistoryRecord
-	cursor    int
-	username  string
-	exportMsg string
-	err       string
+	games        []shared.HistoryRecord
+	cursor       int
+	username     string
+	exportMsg    string
+	clipboardSeq string
+	err          string
 }
 
 // NewHistoryModel creates a new history screen.
@@ -50,6 +51,9 @@ func (m *HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ErrMsg:
 		m.err = msg.Err.Error()
 		return m, nil
+	case clearClipboardMsg:
+		m.clipboardSeq = ""
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc":
@@ -74,12 +78,10 @@ func (m *HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "e":
 			if len(m.games) > 0 {
 				g := m.games[m.cursor]
-				path, err := exportPGN(g.White, g.Black, g.PlayedAt, g.PGN)
-				if err != nil {
-					m.exportMsg = fmt.Sprintf("export error: %s", err)
-				} else {
-					m.exportMsg = fmt.Sprintf("exported: %s", path)
-				}
+				osc, filename := pgnClipboardOSC(g.White, g.Black, g.PlayedAt, g.PGN)
+				m.clipboardSeq = osc
+				m.exportMsg = fmt.Sprintf("copied to clipboard: %s", filename)
+				return m, func() tea.Msg { return clearClipboardMsg{} }
 			}
 		}
 	}
@@ -117,5 +119,5 @@ func (m *HistoryModel) View() string {
 	}
 	sb.WriteString(historyHelpStyle.Render("enter:replay  e:export  q/esc:back"))
 	sb.WriteString("\n")
-	return sb.String()
+	return m.clipboardSeq + sb.String()
 }

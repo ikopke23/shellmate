@@ -7,15 +7,15 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ikopke/shellmate/internal/server"
 	"github.com/ikopke/shellmate/internal/client/screens"
+	"github.com/ikopke/shellmate/internal/server"
 )
 
 // registrationStep tracks which input field is active.
 type registrationStep int
 
 const (
-	stepUsername   registrationStep = iota
+	stepUsername registrationStep = iota
 	stepInviteCode
 )
 

@@ -14,8 +14,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/ssh"
-	bm "github.com/charmbracelet/wish/bubbletea"
 	"github.com/charmbracelet/wish"
+	bm "github.com/charmbracelet/wish/bubbletea"
 	"github.com/charmbracelet/wish/logging"
 	gossh "golang.org/x/crypto/ssh"
 
@@ -45,7 +45,6 @@ func newTeaHandler(hub *server.Hub) bm.Handler {
 			return client.NewRegistrationModel(hub, fingerprint, w, h), opts
 		}
 		c := hub.Register(user.Username)
-		hub.BroadcastLobby(ctx)
 		return client.NewModel(hub, c, user, w, h), opts
 	}
 }

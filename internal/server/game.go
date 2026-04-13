@@ -18,18 +18,20 @@ var ErrTimeExpired = errors.New("time expired")
 
 // Game tracks an active chess game in memory.
 type Game struct {
-	id             string
-	white          *Client
-	black          *Client
-	spectators     []*Client
-	chess          *chess.Game
-	mu             sync.Mutex
-	pendingUndo    string // username who requested undo, or ""
-	timed          bool
-	whiteRemaining time.Duration
-	blackRemaining time.Duration
-	turnStartedAt  time.Time
-	increment      time.Duration
+	id              string
+	white           *Client
+	black           *Client
+	spectators      []*Client
+	chess           *chess.Game
+	mu              sync.Mutex
+	pendingUndo     string // username who requested undo, or ""
+	timed           bool
+	whiteRemaining  time.Duration
+	blackRemaining  time.Duration
+	turnStartedAt   time.Time
+	increment       time.Duration
+	clockTimer      *time.Timer
+	clockGeneration uint64
 }
 
 // NewGame creates a new game. initialSec==0 means untimed.
@@ -258,6 +260,53 @@ func (g *Game) IsOver() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.chess.Outcome() != chess.NoOutcome
+}
+
+func (g *Game) resetClock(hub *Hub) {
+	g.mu.Lock()
+	if g.clockTimer != nil {
+		g.clockTimer.Stop()
+	}
+	g.clockGeneration++
+	gen := g.clockGeneration
+	turn := g.chess.Position().Turn()
+	remaining := g.whiteRemaining
+	if turn == chess.Black {
+		remaining = g.blackRemaining
+	}
+	g.clockTimer = time.AfterFunc(remaining, func() {
+		g.flagPlayer(hub, turn, gen)
+	})
+	g.mu.Unlock()
+}
+
+func (g *Game) stopClock() {
+	g.mu.Lock()
+	if g.clockTimer != nil {
+		g.clockTimer.Stop()
+		g.clockTimer = nil
+	}
+	g.mu.Unlock()
+}
+
+func (g *Game) flagPlayer(hub *Hub, loser chess.Color, gen uint64) {
+	g.mu.Lock()
+	if g.clockGeneration != gen || g.chess.Outcome() != chess.NoOutcome {
+		g.mu.Unlock()
+		return
+	}
+	g.chess.Resign(loser)
+	g.mu.Unlock()
+	hub.mu.Lock()
+	_, exists := hub.games[g.id]
+	if exists {
+		delete(hub.games, g.id)
+	}
+	hub.mu.Unlock()
+	if exists {
+		g.handleGameOver(context.Background(), hub)
+		hub.BroadcastLobby(context.Background())
+	}
 }
 
 // handleGameOver processes Elo changes and persists the game result.

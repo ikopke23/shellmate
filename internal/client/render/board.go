@@ -15,6 +15,8 @@ var (
 	highlightDarkBg  = lipgloss.Color("#AABA44")
 	selectedLightBg  = lipgloss.Color("#F6F669")
 	selectedDarkBg   = lipgloss.Color("#DAD414")
+	checkLightBg     = lipgloss.Color("#FF6060")
+	checkDarkBg      = lipgloss.Color("#CC2020")
 )
 
 // Board renders a chess board using lipgloss.
@@ -28,6 +30,8 @@ type Board struct {
 	flipped        bool
 	selectedSquare chess.Square
 	hasSelected    bool
+	checkSquare    chess.Square
+	hasCheck       bool
 	cellCols       int
 	cellRows       int
 }
@@ -80,6 +84,17 @@ func (b *Board) ClearSelected() {
 	b.hasSelected = false
 }
 
+// SetCheck marks a square as the king-in-check square.
+func (b *Board) SetCheck(sq chess.Square) {
+	b.checkSquare = sq
+	b.hasCheck = true
+}
+
+// ClearCheck removes the king-in-check highlight.
+func (b *Board) ClearCheck() {
+	b.hasCheck = false
+}
+
 // SetFlipped sets whether the board is shown from black's perspective.
 func (b *Board) SetFlipped(flipped bool) {
 	b.flipped = flipped
@@ -120,12 +135,17 @@ func (b *Board) View() string {
 			isLight := (fileIdx+rankIdx)%2 != 0
 			isSelected := b.hasSelected && sq == b.selectedSquare
 			isHighlighted := b.hasLastMove && (sq == b.lastMoveFrom || sq == b.lastMoveTo)
+			isCheck := b.hasCheck && sq == b.checkSquare
 			var bgHex string
 			switch {
 			case isSelected && isLight:
 				bgHex = string(selectedLightBg)
 			case isSelected && !isLight:
 				bgHex = string(selectedDarkBg)
+			case isCheck && isLight:
+				bgHex = string(checkLightBg)
+			case isCheck && !isLight:
+				bgHex = string(checkDarkBg)
 			case isHighlighted && isLight:
 				bgHex = string(highlightLightBg)
 			case isHighlighted && !isLight:

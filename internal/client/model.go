@@ -48,7 +48,11 @@ func NewModel(hub *server.Hub, client *server.Client, user *server.User, w, h in
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.client.Recv(), m.lobby.Init())
+	hub := m.hub
+	return tea.Batch(m.client.Recv(), m.lobby.Init(), func() tea.Msg {
+		hub.BroadcastLobby(context.Background())
+		return nil
+	})
 }
 
 // Update implements tea.Model.

@@ -1,8 +1,7 @@
 package screens
 
 import (
-	"os"
-	"path/filepath"
+	"encoding/base64"
 	"regexp"
 	"time"
 )
@@ -13,20 +12,11 @@ func sanitizeName(s string) string {
 	return nonAlphanumRe.ReplaceAllString(s, "-")
 }
 
-// exportPGN writes a PGN string to ~/Downloads (or working dir) and returns the full path.
-func exportPGN(white, black string, playedAt time.Time, pgn string) (string, error) {
-	home, err := os.UserHomeDir()
-	dir := "."
-	if err == nil {
-		dl := filepath.Join(home, "Downloads")
-		if info, err := os.Stat(dl); err == nil && info.IsDir() {
-			dir = dl
-		}
-	}
-	filename := sanitizeName(white) + "-vs-" + sanitizeName(black) + "-" + playedAt.Format("2006-01-02_15-04-05") + ".pgn"
-	path := filepath.Join(dir, filename)
-	if err := os.WriteFile(path, []byte(pgn), 0o644); err != nil {
-		return "", err
-	}
-	return path, nil
+// pgnClipboardOSC returns an OSC 52 terminal escape sequence that copies pgn
+// to the SSH client's clipboard, and a human-readable filename for the status line.
+func pgnClipboardOSC(white, black string, playedAt time.Time, pgn string) (osc, filename string) {
+	filename = sanitizeName(white) + "-vs-" + sanitizeName(black) + "-" + playedAt.Format("2006-01-02_15-04-05") + ".pgn"
+	enc := base64.StdEncoding.EncodeToString([]byte(pgn))
+	osc = "\x1b]52;c;" + enc + "\x07"
+	return osc, filename
 }
