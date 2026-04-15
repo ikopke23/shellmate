@@ -213,84 +213,121 @@ func (m *GameModel) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+func (m *GameModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		if m.myColor != chess.NoColor && !m.gameOver && m.chess.Position().Turn() == m.myColor {
+			san, handled, cmd := m.input.HandleMsg(msg, m.board, m.chess)
+			if san != "" {
+				return m, tea.Batch(cmd, m.sendMoveStr(san))
+			}
+			if handled {
+				return m, cmd
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m *GameModel) handleUndoKey() tea.Cmd {
+	if m.myColor == chess.NoColor || len(m.moves) == 0 || m.pendingUndo {
+		return nil
+	}
+	m.pendingUndo = true
+	return m.sendUndo()
+}
+
+func (m *GameModel) handleResignKey() tea.Cmd {
+	if m.myColor == chess.NoColor {
+		return nil
+	}
+	return m.sendResign()
+}
+
+func (m *GameModel) handleResizeSmaller() {
+	rows := m.board.CellRows()
+	if rows > 2 {
+		m.board.SetCellSize((rows-1)*2, rows-1)
+	}
+}
+
+func (m *GameModel) handleResizeLarger() {
+	rows := m.board.CellRows()
+	if rows < 8 {
+		m.board.SetCellSize((rows+1)*2, rows+1)
+	}
+}
+
+func (m *GameModel) handleNavigateBack() {
+	if m.viewIdx > 0 {
+		m.viewIdx--
+		m.renderAtViewIdx()
+	}
+}
+
+func (m *GameModel) handleNavigateForward() {
+	if m.viewIdx < len(m.moves) {
+		m.viewIdx++
+		m.renderAtViewIdx()
+	}
+}
+
+func (m *GameModel) handleGameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
+	case "u":
+		return m, m.handleUndoKey()
+	case "ctrl+r":
+		return m, m.handleResignKey()
+	case "ctrl+e":
+		osc, filename := pgnClipboardOSC(m.white, m.black, time.Now(), m.chess.String())
+		m.clipboardSeq = osc
+		m.statusMsg = fmt.Sprintf("copied to clipboard: %s", filename)
+		return m, func() tea.Msg { return clearClipboardMsg{} }
+	case "[":
+		m.handleResizeSmaller()
+	case "]":
+		m.handleResizeLarger()
+	case "left":
+		m.handleNavigateBack()
+	case "right":
+		m.handleNavigateForward()
+	}
+	return m, nil
+}
+
+func (m *GameModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Always delegate to LocalMoveInput first — it handles enter, q/r/b/n promo keys, esc-promo.
+	san, handled, inputCmd := m.input.HandleMsg(msg, m.board, m.chess)
+	if san != "" {
+		return m, tea.Batch(inputCmd, m.sendMoveStr(san))
+	}
+	if handled {
+		return m, inputCmd
+	}
+	if m.pendingUndoPrompt {
+		switch msg.String() {
+		case "y":
+			m.pendingUndoPrompt = false
+			return m, m.sendUndoResponse(true)
+		case "n":
+			m.pendingUndoPrompt = false
+			return m, m.sendUndoResponse(false)
+		}
+		return m, nil
+	}
+	return m.handleGameKey(msg)
+}
+
 // Update implements tea.Model.
 func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			if m.myColor != chess.NoColor && !m.gameOver && m.chess.Position().Turn() == m.myColor {
-				san, handled, cmd := m.input.HandleMsg(msg, m.board, m.chess)
-				if san != "" {
-					return m, tea.Batch(cmd, m.sendMoveStr(san))
-				}
-				if handled {
-					return m, cmd
-				}
-			}
-		}
-		return m, nil
+		return m.handleMouseMsg(msg)
 	case tea.KeyMsg:
-		// Always delegate to LocalMoveInput first — it handles enter, q/r/b/n promo keys, esc-promo.
-		san, handled, inputCmd := m.input.HandleMsg(msg, m.board, m.chess)
-		if san != "" {
-			return m, tea.Batch(inputCmd, m.sendMoveStr(san))
-		}
-		if handled {
-			return m, inputCmd
-		}
-		if m.pendingUndoPrompt {
-			switch msg.String() {
-			case "y":
-				m.pendingUndoPrompt = false
-				return m, m.sendUndoResponse(true)
-			case "n":
-				m.pendingUndoPrompt = false
-				return m, m.sendUndoResponse(false)
-			}
-			return m, nil
-		}
-		switch msg.String() {
-		case "ctrl+c":
-			return m, tea.Quit
-		case "esc", "q":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
-		case "u":
-			if m.myColor == chess.NoColor || len(m.moves) == 0 || m.pendingUndo {
-				return m, nil
-			}
-			m.pendingUndo = true
-			return m, m.sendUndo()
-		case "ctrl+r":
-			if m.myColor == chess.NoColor {
-				return m, nil
-			}
-			return m, m.sendResign()
-		case "ctrl+e":
-			osc, filename := pgnClipboardOSC(m.white, m.black, time.Now(), m.chess.String())
-			m.clipboardSeq = osc
-			m.statusMsg = fmt.Sprintf("copied to clipboard: %s", filename)
-			return m, func() tea.Msg { return clearClipboardMsg{} }
-		case "[":
-			rows := m.board.CellRows()
-			if rows > 2 {
-				m.board.SetCellSize((rows-1)*2, rows-1)
-			}
-		case "]":
-			rows := m.board.CellRows()
-			if rows < 8 {
-				m.board.SetCellSize((rows+1)*2, rows+1)
-			}
-		case "left":
-			if m.viewIdx > 0 {
-				m.viewIdx--
-				m.renderAtViewIdx()
-			}
-		case "right":
-			if m.viewIdx < len(m.moves) {
-				m.viewIdx++
-				m.renderAtViewIdx()
-			}
-		}
+		return m.handleKeyMsg(msg)
 	case clockTickMsg:
 		if m.timed && !m.gameOver {
 			if m.chess.Position().Turn() == chess.White {
@@ -330,6 +367,30 @@ func (m *GameModel) sendUndoResponse(accept bool) tea.Cmd {
 	return func() tea.Msg { return RespondUndoMsg{Accept: accept} }
 }
 
+func (m *GameModel) clockColumn() string {
+	if !m.timed {
+		return ""
+	}
+	turn := m.chess.Position().Turn()
+	var blackStyle, whiteStyle lipgloss.Style
+	if turn == chess.Black {
+		blackStyle = clockActiveStyle
+		whiteStyle = clockInactiveStyle
+	} else {
+		blackStyle = clockInactiveStyle
+		whiteStyle = clockActiveStyle
+	}
+	blackClock := blackStyle.Render(formatMs(m.blackMs))
+	whiteClock := whiteStyle.Render(formatMs(m.whiteMs))
+	boardHeight := m.board.CellRows() * 8
+	spacerHeight := boardHeight - lipgloss.Height(blackClock) - lipgloss.Height(whiteClock)
+	if spacerHeight < 0 {
+		spacerHeight = 0
+	}
+	spacer := strings.Repeat("\n", spacerHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, blackClock, spacer, whiteClock)
+}
+
 // View implements tea.Model.
 func (m *GameModel) View() string {
 	var sb strings.Builder
@@ -339,26 +400,8 @@ func (m *GameModel) View() string {
 	right := lipgloss.NewStyle().Bold(true).Render("Moves") + "\n" + moveView
 	var columns []string
 	columns = append(columns, left, "  ", right)
-	if m.timed {
-		turn := m.chess.Position().Turn()
-		var blackStyle, whiteStyle lipgloss.Style
-		if turn == chess.Black {
-			blackStyle = clockActiveStyle
-			whiteStyle = clockInactiveStyle
-		} else {
-			blackStyle = clockInactiveStyle
-			whiteStyle = clockActiveStyle
-		}
-		blackClock := blackStyle.Render(formatMs(m.blackMs))
-		whiteClock := whiteStyle.Render(formatMs(m.whiteMs))
-		boardHeight := m.board.CellRows() * 8
-		spacerHeight := boardHeight - lipgloss.Height(blackClock) - lipgloss.Height(whiteClock)
-		if spacerHeight < 0 {
-			spacerHeight = 0
-		}
-		spacer := strings.Repeat("\n", spacerHeight)
-		clockCol := lipgloss.JoinVertical(lipgloss.Left, blackClock, spacer, whiteClock)
-		columns = append(columns, "  ", clockCol)
+	if col := m.clockColumn(); col != "" {
+		columns = append(columns, "  ", col)
 	}
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, columns...))
 	sb.WriteString("\n")

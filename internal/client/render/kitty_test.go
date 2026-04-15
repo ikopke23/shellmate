@@ -9,6 +9,8 @@ import (
 	"github.com/notnil/chess"
 )
 
+const kittyAPC = "\033_G"
+
 func TestDetectKitty_Term(t *testing.T) {
 	t.Setenv("TERM", "xterm-kitty")
 	t.Setenv("KITTY_WINDOW_ID", "")
@@ -78,7 +80,7 @@ func TestBuildKittyUpload_Format(t *testing.T) {
 			t.Errorf("missing %q in upload sequence: %q", c, out[:min(len(out), 80)])
 		}
 	}
-	if !strings.HasPrefix(out, "\033_G") {
+	if !strings.HasPrefix(out, kittyAPC) {
 		t.Errorf("expected APC start \\033_G, got: %q", out[:min(len(out), 10)])
 	}
 	if !strings.HasSuffix(out, "\033\\") {
@@ -99,7 +101,7 @@ func TestBuildKittyUpload_Chunking(t *testing.T) {
 		t.Errorf("first chunk should have m=1: %q", firstChunk[:min(len(firstChunk), 80)])
 	}
 	// Last chunk must have m=0
-	lastStart := strings.LastIndex(out, "\033_G")
+	lastStart := strings.LastIndex(out, kittyAPC)
 	lastChunk := out[lastStart:]
 	if !strings.Contains(lastChunk, "m=0") {
 		t.Errorf("last chunk should have m=0: %q", lastChunk[:min(len(lastChunk), 80)])
@@ -152,7 +154,7 @@ func TestRenderBoardKitty_ReturnsSomething(t *testing.T) {
 		t.Error("expected placeholder chars in result")
 	}
 	// Upload sequence should have been written to buf
-	if !strings.Contains(buf.String(), "\033_G") {
+	if !strings.Contains(buf.String(), kittyAPC) {
 		t.Error("expected Kitty APC sequence written to writer")
 	}
 }

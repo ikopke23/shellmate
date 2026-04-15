@@ -61,6 +61,13 @@ func parsePuzzleCSVRow(cols []string) (*PuzzleRow, error) {
 	}, nil
 }
 
+func insertBatch(ctx context.Context, db *DB, batch []PuzzleRow) (int, error) {
+	if err := db.BulkSavePuzzles(ctx, batch); err != nil {
+		return 0, fmt.Errorf("bulk insert: %w", err)
+	}
+	return len(batch), nil
+}
+
 // RunImport streams the Lichess puzzle CSV at csvPath, filters by rating band,
 // and bulk-inserts into the DB in batches of importBatchSize.
 // Malformed rows are logged and skipped. Any DB error causes immediate exit.
@@ -102,10 +109,11 @@ func RunImport(ctx context.Context, db *DB, csvPath string) (processed, inserted
 		}
 		batch = append(batch, *row)
 		if len(batch) >= importBatchSize {
-			if bulkErr := db.BulkSavePuzzles(ctx, batch); bulkErr != nil {
-				return processed, inserted, skipped, fmt.Errorf("bulk insert: %w", bulkErr)
+			n, bulkErr := insertBatch(ctx, db, batch)
+			if bulkErr != nil {
+				return processed, inserted, skipped, bulkErr
 			}
-			inserted += len(batch)
+			inserted += n
 			batch = batch[:0]
 		}
 		if processed%10000 == 0 {
@@ -113,10 +121,11 @@ func RunImport(ctx context.Context, db *DB, csvPath string) (processed, inserted
 		}
 	}
 	if len(batch) > 0 {
-		if bulkErr := db.BulkSavePuzzles(ctx, batch); bulkErr != nil {
-			return processed, inserted, skipped, fmt.Errorf("bulk insert final batch: %w", bulkErr)
+		n, bulkErr := insertBatch(ctx, db, batch)
+		if bulkErr != nil {
+			return processed, inserted, skipped, bulkErr
 		}
-		inserted += len(batch)
+		inserted += n
 	}
 	return processed, inserted, skipped, nil
 }

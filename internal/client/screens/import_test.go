@@ -2,14 +2,16 @@ package screens
 
 import "testing"
 
+const testFilePath = "file path"
+
 func TestDetectImportMode(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
 	}{
-		{"/home/user/game.pgn", "file path"},
-		{"~/Downloads/game.pgn", "file path"},
-		{"./game.pgn", "file path"},
+		{"/home/user/game.pgn", testFilePath},
+		{"~/Downloads/game.pgn", testFilePath},
+		{"./game.pgn", testFilePath},
 		{"[Event \"Test\"]\n1. e4 e5", "pgn text"},
 		{"", "pgn text"},
 	}

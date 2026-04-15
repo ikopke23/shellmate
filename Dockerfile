@@ -5,7 +5,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o shellmate-server ./cmd/shellmate-server
 
-FROM alpine:latest
+FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /app/shellmate-server .

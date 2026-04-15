@@ -72,35 +72,39 @@ func (m *CreateGameModel) selectedTimeControl() shared.TimeControl {
 // Init implements tea.Model.
 func (m *CreateGameModel) Init() tea.Cmd { return nil }
 
+func (m *CreateGameModel) updateCustomMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.customMode = false
+		m.err = ""
+		return m, nil
+	case "tab", "shift+tab":
+		m.focusIdx = 1 - m.focusIdx
+		m.inputs[m.focusIdx].Focus()
+		m.inputs[1-m.focusIdx].Blur()
+		return m, nil
+	case "enter":
+		tc := m.selectedTimeControl()
+		if tc.InitialSeconds <= 0 {
+			m.err = "minutes must be > 0"
+			return m, nil
+		}
+		return m, func() tea.Msg { return CreateGameMsg{TimeControl: tc} }
+	}
+	var cmds [2]tea.Cmd
+	m.inputs[0], cmds[0] = m.inputs[0].Update(msg)
+	m.inputs[1], cmds[1] = m.inputs[1].Update(msg)
+	return m, tea.Batch(cmds[0], cmds[1])
+}
+
 // Update implements tea.Model.
 func (m *CreateGameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.customMode {
-			switch msg.String() {
-			case "ctrl+c":
-				return m, tea.Quit
-			case "esc":
-				m.customMode = false
-				m.err = ""
-				return m, nil
-			case "tab", "shift+tab":
-				m.focusIdx = 1 - m.focusIdx
-				m.inputs[m.focusIdx].Focus()
-				m.inputs[1-m.focusIdx].Blur()
-				return m, nil
-			case "enter":
-				tc := m.selectedTimeControl()
-				if tc.InitialSeconds <= 0 {
-					m.err = "minutes must be > 0"
-					return m, nil
-				}
-				return m, func() tea.Msg { return CreateGameMsg{TimeControl: tc} }
-			}
-			var cmds [2]tea.Cmd
-			m.inputs[0], cmds[0] = m.inputs[0].Update(msg)
-			m.inputs[1], cmds[1] = m.inputs[1].Update(msg)
-			return m, tea.Batch(cmds[0], cmds[1])
+			return m.updateCustomMode(msg)
 		}
 		switch msg.String() {
 		case "ctrl+c":

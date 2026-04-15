@@ -208,6 +208,154 @@ func (m *ReplayModel) Init() tea.Cmd {
 	return nil
 }
 
+func (m *ReplayModel) handleBranchMoveInput(msg tea.MouseMsg) (tea.Model, tea.Cmd, bool) {
+	if !m.branchMode || !m.atBranchTip() {
+		return m, nil, false
+	}
+	san, handled, cmd := m.input.HandleMsg(msg, m.board, m.branchGame)
+	if san != "" {
+		m.applyBranchMove(san)
+		return m, cmd, true
+	}
+	if handled {
+		return m, cmd, true
+	}
+	return m, nil, false
+}
+
+func (m *ReplayModel) handleMoveListClick(msg tea.MouseMsg) {
+	relY := msg.Y - m.moveListY
+	if relY < 0 || msg.X < m.moveListX {
+		return
+	}
+	leftSide := msg.X < m.moveListX+11
+	if m.branchMode {
+		maxIdx := m.branchPointIdx + len(m.branchSAN)
+		idx := m.moveList.ClickMoveIdx(relY, leftSide)
+		if idx >= 0 && idx < maxIdx {
+			m.branchStepIdx = idx + 1
+			m.updateBranchView()
+		}
+	} else {
+		idx := m.moveList.ClickMoveIdx(relY, leftSide)
+		if idx >= 0 && idx < len(m.moves) {
+			m.stepIdx = idx + 1
+			m.updateView()
+		}
+	}
+}
+
+func (m *ReplayModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		if m2, cmd, handled := m.handleBranchMoveInput(msg); handled {
+			return m2, cmd
+		}
+		m.handleMoveListClick(msg)
+	}
+	return m, nil
+}
+
+func (m *ReplayModel) replayResizeSmaller() {
+	rows := m.board.CellRows()
+	if rows > 2 {
+		m.board.SetCellSize((rows-1)*2, rows-1)
+	}
+}
+
+func (m *ReplayModel) replayResizeLarger() {
+	rows := m.board.CellRows()
+	if rows < 8 {
+		m.board.SetCellSize((rows+1)*2, rows+1)
+	}
+}
+
+func (m *ReplayModel) replayNavigateBack() {
+	if m.stepIdx > 0 {
+		m.stepIdx--
+		m.updateView()
+	}
+}
+
+func (m *ReplayModel) replayNavigateForward() {
+	if m.stepIdx < len(m.moves) {
+		m.stepIdx++
+		m.updateView()
+	}
+}
+
+func (m *ReplayModel) handleBranchKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.exitBranch()
+		return m, nil
+	case "s":
+		m.savePromptActive = true
+		m.saveStep = 0
+		wi := textinput.New()
+		wi.Placeholder = "White player name"
+		wi.Focus()
+		m.saveWhiteInput = wi
+		bi := textinput.New()
+		bi.Placeholder = "Black player name"
+		m.saveBlackInput = bi
+		return m, nil
+	case "left", "h":
+		m.branchStepLeft()
+		return m, nil
+	case "right", "l":
+		m.branchStepRight()
+		return m, nil
+	}
+	if m.atBranchTip() {
+		san, handled, cmd := m.input.HandleMsg(msg, m.board, m.branchGame)
+		if san != "" {
+			m.applyBranchMove(san)
+			return m, cmd
+		}
+		if handled {
+			return m, cmd
+		}
+	}
+	return m, nil
+}
+
+func (m *ReplayModel) handleReplayKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc":
+		return m, func() tea.Msg { return ScreenChangeMsg{Screen: m.backScreen} }
+	case "ctrl+c":
+		return m, tea.Quit
+	case "left", "h":
+		m.replayNavigateBack()
+	case "right", "l":
+		m.replayNavigateForward()
+	case "[":
+		m.replayResizeSmaller()
+	case "]":
+		m.replayResizeLarger()
+	case "b":
+		if m.game != nil {
+			m.enterBranch()
+		}
+	case "e":
+		osc, filename := pgnClipboardOSC(m.white, m.black, m.playedAt, m.pgn)
+		m.clipboardSeq = osc
+		m.exportMsg = fmt.Sprintf("copied to clipboard: %s", filename)
+		return m, func() tea.Msg { return clearClipboardMsg{} }
+	}
+	return m, nil
+}
+
+func (m *ReplayModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.savePromptActive {
+		return m.updateSavePrompt(msg)
+	}
+	if m.branchMode {
+		return m.handleBranchKeyMsg(msg)
+	}
+	return m.handleReplayKeyMsg(msg)
+}
+
 // Update implements tea.Model.
 func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -218,38 +366,7 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clipboardSeq = ""
 		return m, nil
 	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			if m.branchMode && m.atBranchTip() {
-				san, handled, cmd := m.input.HandleMsg(msg, m.board, m.branchGame)
-				if san != "" {
-					m.applyBranchMove(san)
-					return m, cmd
-				}
-				if handled {
-					return m, cmd
-				}
-			}
-			// Move list click (works in both replay and branch mode)
-			relY := msg.Y - m.moveListY
-			if relY >= 0 && msg.X >= m.moveListX {
-				leftSide := msg.X < m.moveListX+11
-				if m.branchMode {
-					maxIdx := m.branchPointIdx + len(m.branchSAN)
-					idx := m.moveList.ClickMoveIdx(relY, leftSide)
-					if idx >= 0 && idx < maxIdx {
-						m.branchStepIdx = idx + 1
-						m.updateBranchView()
-					}
-				} else {
-					idx := m.moveList.ClickMoveIdx(relY, leftSide)
-					if idx >= 0 && idx < len(m.moves) {
-						m.stepIdx = idx + 1
-						m.updateView()
-					}
-				}
-			}
-		}
-		return m, nil
+		return m.handleMouseMsg(msg)
 	case UsernameCheckDoneMsg:
 		if len(msg.Unknown) == 0 {
 			return m, m.doSave(false)
@@ -263,79 +380,7 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.saveMsg = "game saved"
 		return m, nil
 	case tea.KeyMsg:
-		if m.savePromptActive {
-			return m.updateSavePrompt(msg)
-		}
-		if m.branchMode {
-			switch msg.String() {
-			case "esc":
-				m.exitBranch()
-				return m, nil
-			case "s":
-				m.savePromptActive = true
-				m.saveStep = 0
-				wi := textinput.New()
-				wi.Placeholder = "White player name"
-				wi.Focus()
-				m.saveWhiteInput = wi
-				bi := textinput.New()
-				bi.Placeholder = "Black player name"
-				m.saveBlackInput = bi
-				return m, nil
-			case "left", "h":
-				m.branchStepLeft()
-				return m, nil
-			case "right", "l":
-				m.branchStepRight()
-				return m, nil
-			}
-			if m.atBranchTip() {
-				san, handled, cmd := m.input.HandleMsg(msg, m.board, m.branchGame)
-				if san != "" {
-					m.applyBranchMove(san)
-					return m, cmd
-				}
-				if handled {
-					return m, cmd
-				}
-			}
-			return m, nil
-		}
-		switch msg.String() {
-		case "q", "esc":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: m.backScreen} }
-		case "ctrl+c":
-			return m, tea.Quit
-		case "left", "h":
-			if m.stepIdx > 0 {
-				m.stepIdx--
-				m.updateView()
-			}
-		case "right", "l":
-			if m.stepIdx < len(m.moves) {
-				m.stepIdx++
-				m.updateView()
-			}
-		case "[":
-			rows := m.board.CellRows()
-			if rows > 2 {
-				m.board.SetCellSize((rows-1)*2, rows-1)
-			}
-		case "]":
-			rows := m.board.CellRows()
-			if rows < 8 {
-				m.board.SetCellSize((rows+1)*2, rows+1)
-			}
-		case "b":
-			if m.game != nil {
-				m.enterBranch()
-			}
-		case "e":
-			osc, filename := pgnClipboardOSC(m.white, m.black, m.playedAt, m.pgn)
-			m.clipboardSeq = osc
-			m.exportMsg = fmt.Sprintf("copied to clipboard: %s", filename)
-			return m, func() tea.Msg { return clearClipboardMsg{} }
-		}
+		return m.handleKeyMsg(msg)
 	}
 	return m, nil
 }
@@ -417,47 +462,60 @@ func stepInfo(current, total int) string {
 	return fmt.Sprintf("Move %d/%d", current, total)
 }
 
+func (m *ReplayModel) updateSavePromptStep0(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "enter" && strings.TrimSpace(m.saveWhiteInput.Value()) != "" {
+		m.saveStep = 1
+		m.saveBlackInput.Focus()
+		return m, nil
+	}
+	if msg.String() == "esc" {
+		m.savePromptActive = false
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.saveWhiteInput, cmd = m.saveWhiteInput.Update(msg)
+	return m, cmd
+}
+
+func (m *ReplayModel) updateSavePromptStep1(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "enter" && strings.TrimSpace(m.saveBlackInput.Value()) != "" {
+		return m, m.checkUsernames()
+	}
+	if msg.String() == "esc" {
+		m.saveStep = 0
+		m.saveWhiteInput.Focus()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.saveBlackInput, cmd = m.saveBlackInput.Update(msg)
+	return m, cmd
+}
+
+func (m *ReplayModel) updateSavePromptStep2(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y":
+		if m.saveConfirmIdx < len(m.saveUnknownNames)-1 {
+			m.saveConfirmIdx++
+			return m, nil
+		}
+		return m, m.doSave(true)
+	case "n":
+		m.saveStep = 1
+		m.saveUnknownNames = nil
+		m.saveBlackInput.Focus()
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m *ReplayModel) updateSavePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.saveStep {
 	case 0:
-		if msg.String() == "enter" && strings.TrimSpace(m.saveWhiteInput.Value()) != "" {
-			m.saveStep = 1
-			m.saveBlackInput.Focus()
-			return m, nil
-		}
-		if msg.String() == "esc" {
-			m.savePromptActive = false
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.saveWhiteInput, cmd = m.saveWhiteInput.Update(msg)
-		return m, cmd
+		return m.updateSavePromptStep0(msg)
 	case 1:
-		if msg.String() == "enter" && strings.TrimSpace(m.saveBlackInput.Value()) != "" {
-			return m, m.checkUsernames()
-		}
-		if msg.String() == "esc" {
-			m.saveStep = 0
-			m.saveWhiteInput.Focus()
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.saveBlackInput, cmd = m.saveBlackInput.Update(msg)
-		return m, cmd
+		return m.updateSavePromptStep1(msg)
 	case 2:
-		switch msg.String() {
-		case "y":
-			if m.saveConfirmIdx < len(m.saveUnknownNames)-1 {
-				m.saveConfirmIdx++
-				return m, nil
-			}
-			return m, m.doSave(true)
-		case "n":
-			m.saveStep = 1
-			m.saveUnknownNames = nil
-			m.saveBlackInput.Focus()
-			return m, nil
-		}
+		return m.updateSavePromptStep2(msg)
 	}
 	return m, nil
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/notnil/chess"
 )
 
+const errGameNotFound = "game not found"
+
 // Hub manages all active SSH session connections and routes messages.
 type Hub struct {
 	db         *DB
@@ -148,23 +150,10 @@ func (h *Hub) GetPuzzleForUser(ctx context.Context, username string) (*PuzzleRow
 	}
 	if puzzle == nil {
 		slog.Info("no cached puzzle found, fetching from lichess", "username", username)
-		resp, err := fetchDailyPuzzle(ctx)
+		puzzle, err = h.fetchAndCachePuzzle(ctx, username)
 		if err != nil {
-			slog.Error("lichess fetch failed", "username", username, "error", err)
-			return nil, 0, fmt.Errorf("lichess fetch: %w", err)
-		}
-		slog.Info("lichess fetch succeeded", "puzzle_id", resp.Puzzle.ID)
-		row, err := toPuzzleRow(resp)
-		if err != nil {
-			slog.Error("toPuzzleRow failed", "puzzle_id", resp.Puzzle.ID, "error", err)
 			return nil, 0, err
 		}
-		if err := h.db.SavePuzzle(ctx, *row); err != nil {
-			slog.Error("SavePuzzle failed", "puzzle_id", row.ID, "error", err)
-			return nil, 0, err
-		}
-		slog.Info("puzzle saved to cache", "puzzle_id", row.ID)
-		puzzle = row
 	} else {
 		slog.Info("serving cached puzzle", "puzzle_id", puzzle.ID, "username", username)
 	}
@@ -188,6 +177,26 @@ func (h *Hub) GetPuzzleForUser(ctx context.Context, username string) (*PuzzleRow
 		}
 	}()
 	return puzzle, userRating, nil
+}
+
+func (h *Hub) fetchAndCachePuzzle(ctx context.Context, username string) (*PuzzleRow, error) {
+	resp, err := fetchDailyPuzzle(ctx)
+	if err != nil {
+		slog.Error("lichess fetch failed", "username", username, "error", err)
+		return nil, fmt.Errorf("lichess fetch: %w", err)
+	}
+	slog.Info("lichess fetch succeeded", "puzzle_id", resp.Puzzle.ID)
+	row, err := toPuzzleRow(resp)
+	if err != nil {
+		slog.Error("toPuzzleRow failed", "puzzle_id", resp.Puzzle.ID, "error", err)
+		return nil, err
+	}
+	if err := h.db.SavePuzzle(ctx, *row); err != nil {
+		slog.Error("SavePuzzle failed", "puzzle_id", row.ID, "error", err)
+		return nil, err
+	}
+	slog.Info("puzzle saved to cache", "puzzle_id", row.ID)
+	return row, nil
 }
 
 // RecordPuzzleAttempt records the attempt and updates the user's puzzle rating atomically.
@@ -337,7 +346,7 @@ func (h *Hub) JoinGame(ctx context.Context, c *Client, gameID string) {
 	g, ok := h.games[gameID]
 	if !ok {
 		h.mu.Unlock()
-		sendError(c, "game not found")
+		sendError(c, errGameNotFound)
 		return
 	}
 	g.mu.Lock()
@@ -410,7 +419,7 @@ func (h *Hub) SpectateGame(ctx context.Context, c *Client, gameID string) {
 	g, ok := h.games[gameID]
 	h.mu.RUnlock()
 	if !ok {
-		sendError(c, "game not found")
+		sendError(c, errGameNotFound)
 		return
 	}
 	g.mu.Lock()
@@ -462,22 +471,12 @@ func (h *Hub) MakeMove(ctx context.Context, c *Client, san string) {
 	g, ok := h.games[c.game]
 	h.mu.RUnlock()
 	if !ok {
-		sendError(c, "game not found")
+		sendError(c, errGameNotFound)
 		return
 	}
 	if err := g.ApplyMove(c, san); err != nil {
 		if errors.Is(err, ErrTimeExpired) {
-			g.stopClock()
-			h.mu.Lock()
-			_, stillExists := h.games[c.game]
-			if stillExists {
-				delete(h.games, c.game)
-			}
-			h.mu.Unlock()
-			if stillExists {
-				g.handleGameOver(ctx, h)
-				h.BroadcastLobby(ctx)
-			}
+			h.handleTimeExpired(ctx, c, g)
 			return
 		}
 		sendError(c, err.Error())
@@ -501,13 +500,27 @@ func (h *Hub) MakeMove(ctx context.Context, c *Client, san string) {
 	}
 }
 
+func (h *Hub) handleTimeExpired(ctx context.Context, c *Client, g *Game) {
+	g.stopClock()
+	h.mu.Lock()
+	_, stillExists := h.games[c.game]
+	if stillExists {
+		delete(h.games, c.game)
+	}
+	h.mu.Unlock()
+	if stillExists {
+		g.handleGameOver(ctx, h)
+		h.BroadcastLobby(ctx)
+	}
+}
+
 // RequestUndo sends an undo request to the opponent in the client's current game.
 func (h *Hub) RequestUndo(c *Client) {
 	h.mu.RLock()
 	g, ok := h.games[c.game]
 	h.mu.RUnlock()
 	if !ok {
-		sendError(c, "game not found")
+		sendError(c, errGameNotFound)
 		return
 	}
 	if err := g.RequestUndo(c); err != nil {
@@ -533,7 +546,7 @@ func (h *Hub) RespondUndo(ctx context.Context, c *Client, accept bool) {
 	g, ok := h.games[c.game]
 	h.mu.RUnlock()
 	if !ok {
-		sendError(c, "game not found")
+		sendError(c, errGameNotFound)
 		return
 	}
 	if accept {
@@ -567,7 +580,7 @@ func (h *Hub) Resign(ctx context.Context, c *Client) {
 	g, ok := h.games[c.game]
 	h.mu.RUnlock()
 	if !ok {
-		sendError(c, "game not found")
+		sendError(c, errGameNotFound)
 		return
 	}
 	g.mu.Lock()

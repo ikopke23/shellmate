@@ -323,10 +323,7 @@ func (m *PuzzleModel) handleMoveInput(san string, inputCmd tea.Cmd) (tea.Model, 
 
 // Init implements tea.Model.
 func (m *PuzzleModel) Init() tea.Cmd {
-	if m.input != nil {
-		return m.input.Init()
-	}
-	return nil
+	return m.initCmd()
 }
 
 // Update implements tea.Model.
@@ -347,62 +344,7 @@ func (m *PuzzleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "esc":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
-		case "ctrl+c":
-			return m, tea.Quit
-		case "r":
-			if m.state == puzzleStateFailure || m.state == puzzleStateSuccess || m.state == puzzleStateSolution {
-				m.retry()
-			}
-			return m, m.initCmd()
-		case "s":
-			if m.state == puzzleStateFailure {
-				m.showSolution()
-			}
-			return m, nil
-		case "n":
-			if m.state == puzzleStatePlaying || m.state == puzzleStateFailure {
-				return m, m.skipAndSubmit()
-			}
-			if m.state == puzzleStateSuccess || m.state == puzzleStateSolution {
-				return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenPuzzle} }
-			}
-		case "[":
-			rows := m.board.CellRows()
-			if rows > 2 {
-				m.board.SetCellSize((rows-1)*2, rows-1)
-			}
-			return m, nil
-		case "]":
-			rows := m.board.CellRows()
-			if rows < 8 {
-				m.board.SetCellSize((rows+1)*2, rows+1)
-			}
-			return m, nil
-		case "left":
-			if m.state != puzzleStateLoading && !m.enginePending && m.viewIdx > 0 {
-				m.viewIdx--
-				m.syncBoardToView()
-			}
-			return m, nil
-		case "right":
-			if m.state != puzzleStateLoading && !m.enginePending {
-				if m.viewIdx < m.totalViewPositions() {
-					m.viewIdx++
-					m.syncBoardToView()
-				}
-			}
-			return m, nil
-		}
-		if m.state == puzzleStatePlaying && !m.enginePending && m.input != nil && m.viewIdx == m.totalViewPositions() {
-			san, _, cmd := m.input.HandleMsg(msg, m.board, m.game)
-			if san != "" {
-				return m.handleMoveInput(san, cmd)
-			}
-			return m, cmd
-		}
+		return m.handlePuzzleKey(msg)
 	case tea.MouseMsg:
 		if m.state == puzzleStatePlaying && !m.enginePending && m.input != nil && m.viewIdx == m.totalViewPositions() {
 			san, _, cmd := m.input.HandleMsg(msg, m.board, m.game)
@@ -415,6 +357,95 @@ func (m *PuzzleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err.Error()
 	}
 	return m, nil
+}
+
+func (m *PuzzleModel) resizeBoardSmaller() {
+	rows := m.board.CellRows()
+	if rows > 2 {
+		m.board.SetCellSize((rows-1)*2, rows-1)
+	}
+}
+
+func (m *PuzzleModel) resizeBoardLarger() {
+	rows := m.board.CellRows()
+	if rows < 8 {
+		m.board.SetCellSize((rows+1)*2, rows+1)
+	}
+}
+
+func (m *PuzzleModel) navigateBack() {
+	if m.state != puzzleStateLoading && !m.enginePending && m.viewIdx > 0 {
+		m.viewIdx--
+		m.syncBoardToView()
+	}
+}
+
+func (m *PuzzleModel) navigateForward() {
+	if m.state != puzzleStateLoading && !m.enginePending {
+		if m.viewIdx < m.totalViewPositions() {
+			m.viewIdx++
+			m.syncBoardToView()
+		}
+	}
+}
+
+func (m *PuzzleModel) handleRetryKey() tea.Cmd {
+	if m.state == puzzleStateFailure || m.state == puzzleStateSuccess || m.state == puzzleStateSolution {
+		m.retry()
+	}
+	return m.initCmd()
+}
+
+func (m *PuzzleModel) handleNKey() (tea.Model, tea.Cmd) {
+	if m.state == puzzleStatePlaying || m.state == puzzleStateFailure {
+		return m, m.skipAndSubmit()
+	}
+	if m.state == puzzleStateSuccess || m.state == puzzleStateSolution {
+		return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenPuzzle} }
+	}
+	return m, nil
+}
+
+func (m *PuzzleModel) handleTextMoveInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.state == puzzleStatePlaying && !m.enginePending && m.input != nil && m.viewIdx == m.totalViewPositions() {
+		san, _, cmd := m.input.HandleMsg(msg, m.board, m.game)
+		if san != "" {
+			return m.handleMoveInput(san, cmd)
+		}
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m *PuzzleModel) handlePuzzleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc":
+		return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
+	case "ctrl+c":
+		return m, tea.Quit
+	case "r":
+		return m, m.handleRetryKey()
+	case "s":
+		if m.state == puzzleStateFailure {
+			m.showSolution()
+		}
+		return m, nil
+	case "n":
+		return m.handleNKey()
+	case "[":
+		m.resizeBoardSmaller()
+		return m, nil
+	case "]":
+		m.resizeBoardLarger()
+		return m, nil
+	case "left":
+		m.navigateBack()
+		return m, nil
+	case "right":
+		m.navigateForward()
+		return m, nil
+	}
+	return m.handleTextMoveInput(msg)
 }
 
 func (m *PuzzleModel) initCmd() tea.Cmd {

@@ -8,6 +8,8 @@ import (
 	"github.com/notnil/chess"
 )
 
+const openingFEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+
 // setupPuzzleModel builds a PuzzleModel already past the loading state using a real
 // chess position. The FEN is the position after 1.e4 (black to move). solution[0] is
 // "d7d5" — the player's (black's) move. No engine response follows, so the puzzle
@@ -16,7 +18,7 @@ func setupPuzzleModel(t *testing.T) *PuzzleModel {
 	t.Helper()
 	record := shared.PuzzleRecord{
 		ID:               "test1",
-		FEN:              "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+		FEN:              openingFEN,
 		Moves:            "d7d5",
 		Rating:           1500,
 		Themes:           []string{"opening"},
@@ -109,7 +111,7 @@ func setupMultiMovePuzzle(t *testing.T) *PuzzleModel {
 	t.Helper()
 	record := shared.PuzzleRecord{
 		ID:               "multi1",
-		FEN:              "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+		FEN:              openingFEN,
 		Moves:            "d7d5 e4d5 d8d5",
 		Rating:           1500,
 		UserPuzzleRating: 1500,
@@ -141,7 +143,7 @@ func TestEngineResponseCompletesOnLastMove(t *testing.T) {
 	// Two-move puzzle: player plays, engine's reply is the last move → success
 	record := shared.PuzzleRecord{
 		ID:               "two1",
-		FEN:              "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+		FEN:              openingFEN,
 		Moves:            "d7d5 e4d5",
 		Rating:           1500,
 		UserPuzzleRating: 1500,

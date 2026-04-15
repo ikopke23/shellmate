@@ -105,6 +105,31 @@ func (b *Board) Flipped() bool {
 	return b.flipped
 }
 
+func (b *Board) squareBgHex(sq chess.Square, fileIdx, rankIdx int) string {
+	isLight := (fileIdx+rankIdx)%2 != 0
+	isSelected := b.hasSelected && sq == b.selectedSquare
+	isHighlighted := b.hasLastMove && (sq == b.lastMoveFrom || sq == b.lastMoveTo)
+	isCheck := b.hasCheck && sq == b.checkSquare
+	switch {
+	case isSelected && isLight:
+		return string(selectedLightBg)
+	case isSelected && !isLight:
+		return string(selectedDarkBg)
+	case isCheck && isLight:
+		return string(checkLightBg)
+	case isCheck && !isLight:
+		return string(checkDarkBg)
+	case isHighlighted && isLight:
+		return string(highlightLightBg)
+	case isHighlighted && !isLight:
+		return string(highlightDarkBg)
+	case isLight:
+		return string(lightSquareBg)
+	default:
+		return string(darkSquareBg)
+	}
+}
+
 // View returns the rendered board as a string.
 func (b *Board) View() string {
 	if kittyEnabled {
@@ -132,29 +157,7 @@ func (b *Board) View() string {
 		cells := make([]cellInfo, 8)
 		for i, fileIdx := range fileOrder {
 			sq := chess.Square(rankIdx*8 + fileIdx)
-			isLight := (fileIdx+rankIdx)%2 != 0
-			isSelected := b.hasSelected && sq == b.selectedSquare
-			isHighlighted := b.hasLastMove && (sq == b.lastMoveFrom || sq == b.lastMoveTo)
-			isCheck := b.hasCheck && sq == b.checkSquare
-			var bgHex string
-			switch {
-			case isSelected && isLight:
-				bgHex = string(selectedLightBg)
-			case isSelected && !isLight:
-				bgHex = string(selectedDarkBg)
-			case isCheck && isLight:
-				bgHex = string(checkLightBg)
-			case isCheck && !isLight:
-				bgHex = string(checkDarkBg)
-			case isHighlighted && isLight:
-				bgHex = string(highlightLightBg)
-			case isHighlighted && !isLight:
-				bgHex = string(highlightDarkBg)
-			case isLight:
-				bgHex = string(lightSquareBg)
-			default:
-				bgHex = string(darkSquareBg)
-			}
+			bgHex := b.squareBgHex(sq, fileIdx, rankIdx)
 			p := board.Piece(sq)
 			cells[i] = cellInfo{bgHex: bgHex, lines: RenderCell(p, bgHex, b.cellCols, b.cellRows)}
 		}
