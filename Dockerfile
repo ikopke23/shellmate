@@ -6,7 +6,8 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o shellmate-server ./cmd/shellmate-server
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates                                                                                                                                                
+RUN addgroup -S shellmate && adduser -S shellmate -G shellmate
 WORKDIR /app
 COPY --from=builder /app/shellmate-server .
 COPY --from=builder /app/migrations ./migrations
