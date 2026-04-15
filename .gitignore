@@ -4,3 +4,6 @@ shellmate-server
 
 # SonarQube local issue cache
 sonarqube-issues/
+
+# Go test coverage output
+coverage.out
