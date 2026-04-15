@@ -1,3 +1,9 @@
 shellmate-server
 /shellmate
 .worktrees/
+
+# SonarQube local issue cache
+sonarqube-issues/
+
+# Go test coverage output
+coverage.out

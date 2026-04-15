@@ -62,6 +62,17 @@ func (g *Game) RemoveSpectator(c *Client) {
 	}
 }
 
+func (g *Game) validateTurn(c *Client) error {
+	turn := g.chess.Position().Turn()
+	if turn == chess.White && c != g.white {
+		return errors.New("it is not your turn")
+	}
+	if turn == chess.Black && c != g.black {
+		return errors.New("it is not your turn")
+	}
+	return nil
+}
+
 // ApplyMove validates and applies a move in SAN notation.
 // Returns ErrTimeExpired if the moving player's clock has run out (timed games only).
 // Clock time is only deducted after the move is confirmed legal.
@@ -71,13 +82,10 @@ func (g *Game) ApplyMove(c *Client, san string) error {
 	if g.chess.Outcome() != chess.NoOutcome {
 		return errors.New("game is already over")
 	}
+	if err := g.validateTurn(c); err != nil {
+		return err
+	}
 	turn := g.chess.Position().Turn()
-	if turn == chess.White && c != g.white {
-		return errors.New("it is not your turn")
-	}
-	if turn == chess.Black && c != g.black {
-		return errors.New("it is not your turn")
-	}
 	// Check time expiry before applying move (but don't mutate clock yet).
 	var elapsed time.Duration
 	if g.timed {

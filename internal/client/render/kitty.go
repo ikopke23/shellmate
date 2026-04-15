@@ -27,6 +27,26 @@ func DetectKitty() {
 	kittyEnabled = term == "xterm-kitty" || windowID != ""
 }
 
+func composeBoardSquareBg(b *Board, sq chess.Square, fileIdx, rankIdx int) string {
+	isLight := (fileIdx+rankIdx)%2 != 0
+	isSelected := b.hasSelected && sq == b.selectedSquare
+	isHighlighted := b.hasLastMove && (sq == b.lastMoveFrom || sq == b.lastMoveTo)
+	switch {
+	case isSelected && isLight:
+		return string(selectedLightBg)
+	case isSelected && !isLight:
+		return string(selectedDarkBg)
+	case isHighlighted && isLight:
+		return string(highlightLightBg)
+	case isHighlighted && !isLight:
+		return string(highlightDarkBg)
+	case isLight:
+		return string(lightSquareBg)
+	default:
+		return string(darkSquareBg)
+	}
+}
+
 // composeBoard renders all 64 squares into a single RGBA image.
 // Accounts for board flip and all highlight states.
 func composeBoard(b *Board) *image.RGBA {
@@ -45,25 +65,7 @@ func composeBoard(b *Board) *image.RGBA {
 	for screenRow, rankIdx := range rankOrder {
 		for screenCol, fileIdx := range fileOrder {
 			sq := chess.Square(rankIdx*8 + fileIdx)
-			isLight := (fileIdx+rankIdx)%2 != 0
-			isSelected := b.hasSelected && sq == b.selectedSquare
-			isHighlighted := b.hasLastMove && (sq == b.lastMoveFrom || sq == b.lastMoveTo)
-			var bgHex string
-			switch {
-			case isSelected && isLight:
-				bgHex = string(selectedLightBg)
-			case isSelected && !isLight:
-				bgHex = string(selectedDarkBg)
-			case isHighlighted && isLight:
-				bgHex = string(highlightLightBg)
-			case isHighlighted && !isLight:
-				bgHex = string(highlightDarkBg)
-			case isLight:
-				bgHex = string(lightSquareBg)
-			default:
-				bgHex = string(darkSquareBg)
-			}
-			bgColor := hexToRGBA(bgHex)
+			bgColor := hexToRGBA(composeBoardSquareBg(b, sq, fileIdx, rankIdx))
 			cellRect := image.Rect(
 				screenCol*pieceSize, screenRow*pieceSize,
 				(screenCol+1)*pieceSize, (screenRow+1)*pieceSize,

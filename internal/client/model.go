@@ -55,18 +55,16 @@ func (m Model) Init() tea.Cmd {
 	})
 }
 
-// Update implements tea.Model.
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) handleServerError(msg shared.ErrorMsg) (tea.Model, tea.Cmd) {
+	updated, _ := m.updateActiveScreen(screens.ErrMsg{Err: errString(msg.Message)})
+	if um, ok := updated.(Model); ok {
+		m = um
+	}
+	return m, m.client.Recv()
+}
+
+func (m Model) handleGameLifecycleMsg(msg tea.Msg) (Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		return m, nil
-	case shared.LobbyState:
-		if m.lobby != nil {
-			m.lobby.SetState(msg)
-		}
-		return m, m.client.Recv()
 	case shared.GameStart:
 		var myColor chess.Color
 		switch m.user.Username {
@@ -79,7 +77,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.game = screens.NewGameModel(msg.GameID, msg.White, msg.Black, myColor, m.user.Username, msg.TimeControl)
 		m.screen = screens.ScreenGame
-		return m, tea.Batch(m.game.Init(), m.client.Recv())
+		return m, tea.Batch(m.game.Init(), m.client.Recv()), true
 	case shared.MoveMsg:
 		if m.game != nil {
 			m.game.SetMovesWithClock(msg.Moves, msg.Clock)
@@ -87,49 +85,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.screen = screens.ScreenGame
 			}
 		}
-		return m, m.client.Recv()
+		return m, m.client.Recv(), true
 	case shared.GameOver:
 		if m.game != nil {
 			m.game.SetGameOver(msg.Result, msg.WhiteEloAfter, msg.BlackEloAfter)
 		}
-		return m, m.client.Recv()
+		return m, m.client.Recv(), true
 	case shared.UndoRequest:
 		if m.game != nil {
 			m.game.SetPendingUndoPrompt(true)
 		}
-		return m, m.client.Recv()
+		return m, m.client.Recv(), true
 	case shared.UndoResponse:
 		if m.game != nil && !msg.Accept {
 			m.game.ClearPendingUndo()
 		}
-		return m, m.client.Recv()
+		return m, m.client.Recv(), true
 	case shared.UndoAccepted:
 		if m.game != nil {
 			m.game.SetMoves(msg.Moves)
 		}
-		return m, m.client.Recv()
-	case shared.ErrorMsg:
-		updated, _ := m.updateActiveScreen(screens.ErrMsg{Err: errString(msg.Message)})
-		if um, ok := updated.(Model); ok {
-			m = um
-		}
-		return m, m.client.Recv()
-	case screens.ScreenChangeMsg:
-		return m.handleScreenChange(msg)
+		return m, m.client.Recv(), true
+	}
+	return m, nil, false
+}
+
+func (m Model) handleHubActionMsg(msg tea.Msg) (Model, tea.Cmd, bool) {
+	switch msg := msg.(type) {
 	case screens.JoinGameMsg:
 		hub, client := m.hub, m.client
 		gameID := msg.GameID
 		return m, func() tea.Msg {
 			hub.JoinGame(context.Background(), client, gameID)
 			return nil
-		}
+		}, true
 	case screens.SpectateGameMsg:
 		hub, client := m.hub, m.client
 		gameID := msg.GameID
 		return m, func() tea.Msg {
 			hub.SpectateGame(context.Background(), client, gameID)
 			return nil
-		}
+		}, true
 	case screens.CreateGameMsg:
 		hub, client := m.hub, m.client
 		tc := msg.TimeControl
@@ -137,33 +133,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg {
 			hub.CreateGame(context.Background(), client, tc)
 			return nil
-		}
+		}, true
 	case screens.MakeMoveMsg:
 		hub, client := m.hub, m.client
 		san := msg.SAN
 		return m, func() tea.Msg {
 			hub.MakeMove(context.Background(), client, san)
 			return nil
-		}
+		}, true
 	case screens.ResignMsg:
 		hub, client := m.hub, m.client
 		return m, func() tea.Msg {
 			hub.Resign(context.Background(), client)
 			return nil
-		}
+		}, true
 	case screens.RequestUndoMsg:
 		hub, client := m.hub, m.client
 		return m, func() tea.Msg {
 			hub.RequestUndo(client)
 			return nil
-		}
+		}, true
 	case screens.RespondUndoMsg:
 		hub, client := m.hub, m.client
 		accept := msg.Accept
 		return m, func() tea.Msg {
 			hub.RespondUndo(context.Background(), client, accept)
 			return nil
-		}
+		}, true
 	case screens.SubmitPuzzleAttemptMsg:
 		hub := m.hub
 		username := m.user.Username
@@ -177,7 +173,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return screens.PuzzleAttemptMsg{Err: err}
 			}
 			return screens.PuzzleAttemptMsg{NewRating: newRating}
-		}
+		}, true
 	case screens.CheckUsernamesActionMsg:
 		hub := m.hub
 		white, black := msg.White, msg.Black
@@ -193,7 +189,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return screens.UsernameCheckDoneMsg{Unknown: unknown}
-		}
+		}, true
 	case screens.SaveImportedActionMsg:
 		hub := m.hub
 		white, black, pgn, forceCreate := msg.White, msg.Black, msg.PGN, msg.ForceCreate
@@ -202,34 +198,100 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return screens.ErrMsg{Err: err}
 			}
 			return screens.SaveImportedDoneMsg{}
-		}
+		}, true
+	}
+	return m, nil, false
+}
+
+func (m Model) handleDataLoadedMsg(msg tea.Msg) (Model, bool) {
+	switch msg := msg.(type) {
 	case historyLoadedMsg:
 		if m.history != nil {
 			m.history.SetGames(msg.records)
 		}
-		return m, nil
+		return m, true
 	case leaderboardLoadedMsg:
 		if m.leaderboard != nil {
 			m.leaderboard.SetPlayers(msg.players)
 		}
-		return m, nil
+		return m, true
 	case importedGamesLoadedMsg:
 		if m.importedGames != nil {
 			m.importedGames.SetGames(msg.records)
 		}
-		return m, nil
+		return m, true
 	case puzzleLoadedMsg:
 		if m.puzzle != nil {
 			m.puzzle.SetPuzzle(msg.record)
 		}
+		return m, true
+	}
+	return m, false
+}
+
+// Update implements tea.Model.
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
-	case screens.ErrMsg:
-		// pass through to active screen
+	case shared.LobbyState:
+		if m.lobby != nil {
+			m.lobby.SetState(msg)
+		}
+		return m, m.client.Recv()
+	case shared.ErrorMsg:
+		return m.handleServerError(msg)
+	case screens.ScreenChangeMsg:
+		return m.handleScreenChange(msg)
+	}
+	if m2, cmd, ok := m.handleGameLifecycleMsg(msg); ok {
+		return m2, cmd
+	}
+	if m2, cmd, ok := m.handleHubActionMsg(msg); ok {
+		return m2, cmd
+	}
+	if m2, ok := m.handleDataLoadedMsg(msg); ok {
+		return m2, nil
 	}
 	return m.updateActiveScreen(msg)
 }
 
+func (m Model) updateSecondaryScreen(msg tea.Msg) (Model, tea.Cmd, bool) {
+	switch m.screen {
+	case screens.ScreenHistory:
+		updated, cmd := m.history.Update(msg)
+		if hm, ok := updated.(*screens.HistoryModel); ok {
+			m.history = hm
+		}
+		return m, cmd, true
+	case screens.ScreenLeaderboard:
+		updated, cmd := m.leaderboard.Update(msg)
+		if lm, ok := updated.(*screens.LeaderboardModel); ok {
+			m.leaderboard = lm
+		}
+		return m, cmd, true
+	case screens.ScreenImportedGames:
+		updated, cmd := m.importedGames.Update(msg)
+		if ig, ok := updated.(*screens.ImportedGamesModel); ok {
+			m.importedGames = ig
+		}
+		return m, cmd, true
+	case screens.ScreenCreateGame:
+		updated, cmd := m.createGame.Update(msg)
+		if cgm, ok := updated.(*screens.CreateGameModel); ok {
+			m.createGame = cgm
+		}
+		return m, cmd, true
+	}
+	return m, nil, false
+}
+
 func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m2, cmd, ok := m.updateSecondaryScreen(msg); ok {
+		return m2, cmd
+	}
 	switch m.screen {
 	case screens.ScreenLobby:
 		updated, cmd := m.lobby.Update(msg)
@@ -243,34 +305,10 @@ func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.game = gm
 		}
 		return m, cmd
-	case screens.ScreenHistory:
-		updated, cmd := m.history.Update(msg)
-		if hm, ok := updated.(*screens.HistoryModel); ok {
-			m.history = hm
-		}
-		return m, cmd
 	case screens.ScreenReplay:
 		updated, cmd := m.replay.Update(msg)
 		if rm, ok := updated.(*screens.ReplayModel); ok {
 			m.replay = rm
-		}
-		return m, cmd
-	case screens.ScreenLeaderboard:
-		updated, cmd := m.leaderboard.Update(msg)
-		if lm, ok := updated.(*screens.LeaderboardModel); ok {
-			m.leaderboard = lm
-		}
-		return m, cmd
-	case screens.ScreenImport:
-		updated, cmd := m.importScreen.Update(msg)
-		if im, ok := updated.(*screens.ImportModel); ok {
-			m.importScreen = im
-		}
-		return m, cmd
-	case screens.ScreenImportedGames:
-		updated, cmd := m.importedGames.Update(msg)
-		if ig, ok := updated.(*screens.ImportedGamesModel); ok {
-			m.importedGames = ig
 		}
 		return m, cmd
 	case screens.ScreenPuzzle:
@@ -279,10 +317,10 @@ func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.puzzle = pm
 		}
 		return m, cmd
-	case screens.ScreenCreateGame:
-		updated, cmd := m.createGame.Update(msg)
-		if cgm, ok := updated.(*screens.CreateGameModel); ok {
-			m.createGame = cgm
+	case screens.ScreenImport:
+		updated, cmd := m.importScreen.Update(msg)
+		if im, ok := updated.(*screens.ImportModel); ok {
+			m.importScreen = im
 		}
 		return m, cmd
 	}
@@ -346,8 +384,29 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 	return m, nil
 }
 
-// View implements tea.Model.
-func (m Model) View() string {
+func (m Model) viewSecondaryScreen() string {
+	switch m.screen {
+	case screens.ScreenHistory:
+		if m.history != nil {
+			return m.history.View()
+		}
+	case screens.ScreenLeaderboard:
+		if m.leaderboard != nil {
+			return m.leaderboard.View()
+		}
+	case screens.ScreenImportedGames:
+		if m.importedGames != nil {
+			return m.importedGames.View()
+		}
+	case screens.ScreenCreateGame:
+		if m.createGame != nil {
+			return m.createGame.View()
+		}
+	}
+	return ""
+}
+
+func (m Model) viewForScreen() string {
 	switch m.screen {
 	case screens.ScreenLobby:
 		if m.lobby != nil {
@@ -357,36 +416,25 @@ func (m Model) View() string {
 		if m.game != nil {
 			return m.game.View()
 		}
-	case screens.ScreenHistory:
-		if m.history != nil {
-			return m.history.View()
-		}
 	case screens.ScreenReplay:
 		if m.replay != nil {
 			return m.replay.View()
-		}
-	case screens.ScreenLeaderboard:
-		if m.leaderboard != nil {
-			return m.leaderboard.View()
-		}
-	case screens.ScreenImport:
-		if m.importScreen != nil {
-			return m.importScreen.View()
-		}
-	case screens.ScreenImportedGames:
-		if m.importedGames != nil {
-			return m.importedGames.View()
 		}
 	case screens.ScreenPuzzle:
 		if m.puzzle != nil {
 			return m.puzzle.View()
 		}
-	case screens.ScreenCreateGame:
-		if m.createGame != nil {
-			return m.createGame.View()
+	case screens.ScreenImport:
+		if m.importScreen != nil {
+			return m.importScreen.View()
 		}
 	}
-	return ""
+	return m.viewSecondaryScreen()
+}
+
+// View implements tea.Model.
+func (m Model) View() string {
+	return m.viewForScreen()
 }
 
 type errString string

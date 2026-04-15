@@ -43,37 +43,50 @@ func (li *LocalMoveInput) PendingPromo() bool {
 	return li.pendingPromo
 }
 
+func (li *LocalMoveInput) handleMouseInput(msg tea.MouseMsg, board *render.Board, game *chess.Game) (san string, handled bool) {
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		if li.pendingPromo {
+			return li.handlePromoClick(msg.X, msg.Y, board, game), true
+		}
+		sq, ok := li.squareFromMouse(msg.X, msg.Y, board)
+		if ok {
+			return li.handleSquareClick(sq, board, game), true
+		}
+	}
+	return "", false
+}
+
+func (li *LocalMoveInput) handleKeyInput(msg tea.KeyMsg, game *chess.Game) (san string, handled bool) {
+	if li.pendingPromo {
+		switch msg.String() {
+		case "q", "r", "b", "n":
+			san = li.promoSAN(msg.String(), game)
+			li.pendingPromo = false
+			return san, true
+		case "esc":
+			li.pendingPromo = false
+			return "", true
+		}
+		return "", true
+	}
+	if msg.String() == "enter" {
+		return li.submitSAN(game), true
+	}
+	return "", false
+}
+
 // HandleMsg processes a tea.Msg for move input.
 // Returns (san, handled, cmd). san non-empty = complete move. handled = parent should not process further.
 func (li *LocalMoveInput) HandleMsg(msg tea.Msg, board *render.Board, game *chess.Game) (san string, handled bool, cmd tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			if li.pendingPromo {
-				san = li.handlePromoClick(msg.X, msg.Y, board, game)
-				return san, true, nil
-			}
-			sq, ok := li.squareFromMouse(msg.X, msg.Y, board)
-			if ok {
-				san = li.handleSquareClick(sq, board, game)
-				return san, true, nil
-			}
+		san, handled = li.handleMouseInput(msg, board, game)
+		if handled {
+			return san, true, nil
 		}
 	case tea.KeyMsg:
-		if li.pendingPromo {
-			switch msg.String() {
-			case "q", "r", "b", "n":
-				san = li.promoSAN(msg.String(), game)
-				li.pendingPromo = false
-				return san, true, nil
-			case "esc":
-				li.pendingPromo = false
-				return "", true, nil
-			}
-			return "", true, nil
-		}
-		if msg.String() == "enter" {
-			san = li.submitSAN(game)
+		san, handled = li.handleKeyInput(msg, game)
+		if handled {
 			return san, true, nil
 		}
 	}
