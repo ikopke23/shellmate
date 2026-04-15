@@ -15,4 +15,5 @@ EXPOSE 2222
 ENV DATABASE_URL="" \
     INVITE_CODE="" \
     SSH_PORT=":2222"
+USER shellmate
 CMD ["./shellmate-server"]
