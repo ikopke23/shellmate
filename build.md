@@ -6,6 +6,24 @@
   go build -o shellmate ./cmd/shellmate                                                                                                                         
   go build -o shellmate-server ./cmd/shellmate-server   
 
+## Running Tests
+
+```bash
+go test ./...
+```
+
+DB integration tests in `internal/server` require a PostgreSQL instance. Set these env vars to enable them (tests skip cleanly without them):
+
+```bash
+export SHELLMATE_TEST_POSTGRES_HOST=localhost
+export SHELLMATE_TEST_POSTGRES_USER=shellmate
+export SHELLMATE_TEST_POSTGRES_PASS=shellmate
+```
+
+The tests connect to a database named `shellmate_test` and apply all migrations automatically. Existing data is truncated at the start of each test. Use a dedicated test database, not production.
+
+---
+
 ## SonarQube Integration
 
 SonarQube analysis runs automatically via GitHub Actions on every push to `main` and all PRs. To work with results locally using the `sonar-fetch` and `sonar-plan` Claude skills, set these environment variables:
