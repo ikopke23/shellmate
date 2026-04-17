@@ -10,10 +10,12 @@ import (
 	"github.com/notnil/chess"
 )
 
-type historyLoadedMsg struct{ records []shared.HistoryRecord }
-type leaderboardLoadedMsg struct{ players []shared.PlayerInfo }
-type importedGamesLoadedMsg struct{ records []shared.HistoryRecord }
-type puzzleLoadedMsg struct{ record shared.PuzzleRecord }
+type (
+	historyLoadedMsg       struct{ records []shared.HistoryRecord }
+	leaderboardLoadedMsg   struct{ players []shared.PlayerInfo }
+	importedGamesLoadedMsg struct{ records []shared.HistoryRecord }
+	puzzleLoadedMsg        struct{ record shared.PuzzleRecord }
+)
 
 // Model is the root bubbletea model for an authenticated SSH session.
 type Model struct {
