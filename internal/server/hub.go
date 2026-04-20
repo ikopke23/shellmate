@@ -307,15 +307,6 @@ func (h *Hub) buildLobbyData(ctx context.Context) (shared.LobbyState, []*Client,
 	return state, clientSnapshot, nil
 }
 
-func (h *Hub) sendLobbyTo(ctx context.Context, c *Client) {
-	state, _, err := h.buildLobbyData(ctx)
-	if err != nil {
-		slog.Error("failed to build lobby data", "error", err)
-		return
-	}
-	c.Send(state)
-}
-
 // BroadcastLobby sends the current lobby state to all connected clients.
 func (h *Hub) BroadcastLobby(ctx context.Context) {
 	state, clients, err := h.buildLobbyData(ctx)

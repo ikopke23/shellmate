@@ -136,7 +136,7 @@ func (d *DB) CreateUserWithKey(ctx context.Context, username, fingerprint string
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, `INSERT INTO users (username) VALUES ($1)`, username); err != nil {
 		return nil, err
 	}

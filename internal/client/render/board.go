@@ -174,6 +174,12 @@ func (b *Board) View() string {
 			sb.WriteString("\n")
 		}
 	}
+	b.renderFileLabels(&sb, fileOrder, labelStyle)
+	return sb.String()
+}
+
+// renderFileLabels appends the bottom file-label row for the current flip state.
+func (b *Board) renderFileLabels(sb *strings.Builder, fileOrder [8]int, labelStyle lipgloss.Style) {
 	sb.WriteString("  ")
 	for _, fileIdx := range fileOrder {
 		label := string(rune('a' + fileIdx))
@@ -182,5 +188,4 @@ func (b *Board) View() string {
 		sb.WriteString(labelStyle.Render(strings.Repeat(" ", leftPad) + label + strings.Repeat(" ", rightPad)))
 	}
 	sb.WriteString("\n")
-	return sb.String()
 }

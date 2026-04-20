@@ -321,6 +321,22 @@ func (m *GameModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleGameKey(msg)
 }
 
+// tickClocks advances the active side's remaining time by one second and
+// returns a follow-up clockTick command, or nil if the game isn't timed/over.
+func (m *GameModel) tickClocks() tea.Cmd {
+	if !m.timed || m.gameOver {
+		return nil
+	}
+	if m.chess.Position().Turn() == chess.White {
+		if m.whiteMs > 0 {
+			m.whiteMs -= 1000
+		}
+	} else if m.blackMs > 0 {
+		m.blackMs -= 1000
+	}
+	return clockTick()
+}
+
 // Update implements tea.Model.
 func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -329,17 +345,8 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 	case clockTickMsg:
-		if m.timed && !m.gameOver {
-			if m.chess.Position().Turn() == chess.White {
-				if m.whiteMs > 0 {
-					m.whiteMs -= 1000
-				}
-			} else {
-				if m.blackMs > 0 {
-					m.blackMs -= 1000
-				}
-			}
-			return m, clockTick()
+		if cmd := m.tickClocks(); cmd != nil {
+			return m, cmd
 		}
 	case ErrMsg:
 		m.err = msg.Err.Error()
