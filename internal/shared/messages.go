@@ -1,3 +1,5 @@
+// Package shared defines the wire types exchanged between the shellmate
+// client and server (lobby state, game state, puzzle records, etc.).
 package shared
 
 import "time"
