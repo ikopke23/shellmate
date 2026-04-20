@@ -1,9 +1,9 @@
-shellmate-server
+/shellmate-server
 /shellmate
 .worktrees/
 
 # claude Superpowers
-docs/Superpowers/
+docs/superpowers/
 
 # SonarQube local issue cache
 sonarqube-issues/
