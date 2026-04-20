@@ -91,10 +91,10 @@ func main() {
 		sshPort = ":2222"
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	db, err := server.NewDB(ctx, dbURL, migrationSQL)
 	if err != nil {
 		slog.Error("failed to connect to database", "error", err)
+		cancel()
 		os.Exit(1)
 	}
 	hub := server.NewHub(db, inviteCode)
@@ -109,8 +109,10 @@ func main() {
 	)
 	if err != nil {
 		slog.Error("failed to create SSH server", "err", err)
+		cancel()
 		os.Exit(1)
 	}
+	defer cancel()
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 	slog.Info("SSH server starting", "addr", sshPort)

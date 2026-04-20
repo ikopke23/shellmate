@@ -24,11 +24,11 @@ func readMigrationFile(name string) (string, error) {
 	execPath, err := os.Executable()
 	if err == nil {
 		p := filepath.Join(filepath.Dir(execPath), "migrations", name)
-		if data, err := os.ReadFile(p); err == nil {
+		if data, err := os.ReadFile(p); err == nil { //nolint:gosec // migration filenames are baked-in constants, not user input
 			return string(data), nil
 		}
 	}
-	data, err := os.ReadFile(filepath.Join("./migrations", name))
+	data, err := os.ReadFile(filepath.Join("migrations", name)) //nolint:gosec // migration filenames are baked-in constants, not user input
 	if err != nil {
 		return "", err
 	}
