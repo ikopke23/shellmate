@@ -84,8 +84,8 @@ func (m *ImportedGamesModel) View() string {
 		if i == m.cursor {
 			cursor = importedGamesCursorStyle.Render("> ")
 		}
-		sb.WriteString(fmt.Sprintf("%s%-12s vs %-12s  %s\n",
-			cursor, g.White, g.Black, g.PlayedAt.Format("2006-01-02 15:04")))
+		fmt.Fprintf(&sb, "%s%-12s vs %-12s  %s\n",
+			cursor, g.White, g.Black, g.PlayedAt.Format("2006-01-02 15:04"))
 	}
 	sb.WriteString("\n")
 	if m.err != "" {

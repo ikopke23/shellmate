@@ -57,10 +57,10 @@ func (m *LeaderboardModel) View() string {
 	var sb strings.Builder
 	sb.WriteString(lbTitleStyle.Render("Leaderboard"))
 	sb.WriteString("\n\n")
-	sb.WriteString(fmt.Sprintf("  %-4s %-20s %s\n", "#", "Player", "Elo"))
-	sb.WriteString(fmt.Sprintf("  %-4s %-20s %s\n", "---", "--------------------", "----"))
+	fmt.Fprintf(&sb, "  %-4s %-20s %s\n", "#", "Player", "Elo")
+	fmt.Fprintf(&sb, "  %-4s %-20s %s\n", "---", "--------------------", "----")
 	for i, p := range m.players {
-		sb.WriteString(fmt.Sprintf("  %-4d %-20s %d\n", i+1, p.Username, p.Elo))
+		fmt.Fprintf(&sb, "  %-4d %-20s %d\n", i+1, p.Username, p.Elo)
 	}
 	if len(m.players) == 0 {
 		sb.WriteString("  No players yet.\n")
