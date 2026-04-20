@@ -96,7 +96,7 @@ func flushBatch(ctx context.Context, db *DB, batch []PuzzleRow) (int, error) {
 // Malformed rows are logged and skipped. Any DB error causes immediate exit.
 // Returns counts of (processed, inserted, skipped).
 func RunImport(ctx context.Context, db *DB, csvPath string) (processed, inserted, skipped int, err error) {
-	f, err := os.Open(csvPath)
+	f, err := os.Open(csvPath) //nolint:gosec // csvPath is an operator-supplied CLI argument for offline puzzle import
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("open csv: %w", err)
 	}

@@ -20,7 +20,7 @@ func expected(rA, rB int) float64 {
 //   - K = 40 if either player has played fewer than 15 games (provisional), else K = 20
 //   - Delta capped at ±50 per game
 //   - Elo floor of 800
-func Calculate(rA, rB int, gamesA, gamesB int, result float64) (int, int) {
+func Calculate(rA, rB, gamesA, gamesB int, result float64) (int, int) {
 	k := 20.0
 	if gamesA < 15 || gamesB < 15 {
 		k = 40.0

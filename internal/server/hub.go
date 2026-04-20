@@ -1,3 +1,5 @@
+// Package server implements the shellmate game server: the SSH session hub,
+// game state, persistence, ELO updates, and Lichess puzzle import.
 package server
 
 import (
@@ -123,14 +125,18 @@ func (h *Hub) GetGameHistory(ctx context.Context, username string) ([]HistoryRec
 	return h.db.GetGameHistory(ctx, username)
 }
 
+// CheckUsername reports whether a player with the given username exists.
 func (h *Hub) CheckUsername(ctx context.Context, username string) (bool, error) {
 	return h.db.CheckUsername(ctx, username)
 }
 
+// SaveImportedGame stores a PGN-imported game under the given usernames.
+// If forceCreate is true, missing player rows are created on demand.
 func (h *Hub) SaveImportedGame(ctx context.Context, white, black, pgn string, forceCreate bool) error {
 	return h.db.SaveImportedGame(ctx, white, black, pgn, forceCreate)
 }
 
+// GetImportedGames returns every PGN-imported game across all users.
 func (h *Hub) GetImportedGames(ctx context.Context) ([]HistoryRecord, error) {
 	return h.db.GetImportedGames(ctx)
 }
