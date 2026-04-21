@@ -28,10 +28,12 @@ type ImportedGamesModel struct {
 	err    string
 }
 
+// NewImportedGamesModel creates a new imported-games list screen.
 func NewImportedGamesModel() *ImportedGamesModel {
 	return &ImportedGamesModel{}
 }
 
+// SetGames replaces the list of imported games displayed on screen.
 func (m *ImportedGamesModel) SetGames(games []shared.HistoryRecord) {
 	m.games = games
 	if m.cursor >= len(m.games) && len(m.games) > 0 {
@@ -39,8 +41,10 @@ func (m *ImportedGamesModel) SetGames(games []shared.HistoryRecord) {
 	}
 }
 
+// Init implements tea.Model.
 func (m *ImportedGamesModel) Init() tea.Cmd { return nil }
 
+// Update implements tea.Model.
 func (m *ImportedGamesModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case ErrMsg:
@@ -72,6 +76,7 @@ func (m *ImportedGamesModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// View implements tea.Model.
 func (m *ImportedGamesModel) View() string {
 	var sb strings.Builder
 	sb.WriteString(importedGamesTitleStyle.Render("Imported Games"))
@@ -79,7 +84,8 @@ func (m *ImportedGamesModel) View() string {
 	if len(m.games) == 0 {
 		sb.WriteString("  No imported games yet.\n")
 	}
-	for i, g := range m.games {
+	for i := range m.games {
+		g := &m.games[i]
 		cursor := "  "
 		if i == m.cursor {
 			cursor = importedGamesCursorStyle.Render("> ")

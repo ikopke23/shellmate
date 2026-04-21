@@ -369,7 +369,8 @@ func (m *ReplayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouseMsg(msg)
 	case UsernameCheckDoneMsg:
 		if len(msg.Unknown) == 0 {
-			return m, m.doSave(false)
+			cmd := m.doSave(false)
+			return m, cmd
 		}
 		m.saveUnknownNames = msg.Unknown
 		m.saveConfirmIdx = 0
@@ -479,7 +480,8 @@ func (m *ReplayModel) updateSavePromptStep0(msg tea.KeyMsg) (tea.Model, tea.Cmd)
 
 func (m *ReplayModel) updateSavePromptStep1(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "enter" && strings.TrimSpace(m.saveBlackInput.Value()) != "" {
-		return m, m.checkUsernames()
+		cmd := m.checkUsernames()
+		return m, cmd
 	}
 	if msg.String() == "esc" {
 		m.saveStep = 0
@@ -498,7 +500,8 @@ func (m *ReplayModel) updateSavePromptStep2(msg tea.KeyMsg) (tea.Model, tea.Cmd)
 			m.saveConfirmIdx++
 			return m, nil
 		}
-		return m, m.doSave(true)
+		cmd := m.doSave(true)
+		return m, cmd
 	case "n":
 		m.saveStep = 1
 		m.saveUnknownNames = nil

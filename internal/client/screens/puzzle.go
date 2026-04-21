@@ -77,7 +77,7 @@ func NewPuzzleModel(username string) *PuzzleModel {
 	}
 }
 
-// SetPuzzle initialises the puzzle state from a loaded record.
+// SetPuzzle initializes the puzzle state from a loaded record.
 // Called by the root model when the fetch Cmd completes.
 func (m *PuzzleModel) SetPuzzle(record shared.PuzzleRecord) {
 	m.record = &record
@@ -165,7 +165,9 @@ func (m *PuzzleModel) updateMoveList() {
 	for i, mv := range moves {
 		puzzleSANs[i] = notation.Encode(positions[i], mv)
 	}
-	all := append(contextSANs, puzzleSANs...)
+	all := make([]string, 0, len(contextSANs)+len(puzzleSANs))
+	all = append(all, contextSANs...)
+	all = append(all, puzzleSANs...)
 	// highlight the move that was applied to reach viewIdx (i.e. the one before it)
 	currentMoveIdx := m.viewIdx - 1
 	if len(all) == 0 {
@@ -332,7 +334,8 @@ func (m *PuzzleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case puzzleEngineResponseMsg:
 		m.applyEngineResponse(msg.uci)
 		if m.state == puzzleStateSuccess {
-			return m, m.submitAttempt(true)
+			cmd := m.submitAttempt(true)
+			return m, cmd
 		}
 		return m, nil
 	case PuzzleAttemptMsg:
@@ -398,7 +401,8 @@ func (m *PuzzleModel) handleRetryKey() tea.Cmd {
 
 func (m *PuzzleModel) handleNKey() (tea.Model, tea.Cmd) {
 	if m.state == puzzleStatePlaying || m.state == puzzleStateFailure {
-		return m, m.skipAndSubmit()
+		cmd := m.skipAndSubmit()
+		return m, cmd
 	}
 	if m.state == puzzleStateSuccess || m.state == puzzleStateSolution {
 		return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenPuzzle} }
@@ -424,7 +428,8 @@ func (m *PuzzleModel) handlePuzzleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "r":
-		return m, m.handleRetryKey()
+		cmd := m.handleRetryKey()
+		return m, cmd
 	case "s":
 		if m.state == puzzleStateFailure {
 			m.showSolution()
@@ -503,6 +508,7 @@ func (m *PuzzleModel) View() string {
 	case puzzleStateSolution:
 		sb.WriteString(puzzleDimStyle.Render("Solution:"))
 		sb.WriteString("\n")
+	case puzzleStateLoading:
 	}
 	if m.err != "" {
 		sb.WriteString(puzzleBadStyle.Render(m.err))
@@ -516,7 +522,7 @@ func (m *PuzzleModel) View() string {
 		help = "←→:navigate solution  r:retry  n:next  q:back"
 	case puzzleStateFailure:
 		help = "r:retry  s:solution  ←→:navigate  [:smaller  ]:larger  n:next  q:back"
-	default:
+	case puzzleStateLoading, puzzleStateSuccess:
 		help = "r:retry  ←→:navigate  [:smaller  ]:larger  n:next  q:back"
 	}
 	sb.WriteString(puzzleHelpStyle.Render(help))
@@ -529,7 +535,7 @@ func (m *PuzzleModel) rightPanel() string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Puzzle #%s  ★ %d\n", m.record.ID, m.record.Rating))
+	fmt.Fprintf(&sb, "Puzzle #%s  ★ %d\n", m.record.ID, m.record.Rating)
 	if len(m.record.Themes) > 0 {
 		sb.WriteString(puzzleDimStyle.Render("Themes: " + strings.Join(m.record.Themes, ", ")))
 		sb.WriteString("\n")
@@ -537,14 +543,14 @@ func (m *PuzzleModel) rightPanel() string {
 	sb.WriteString("\n")
 	sb.WriteString(puzzleDimStyle.Render(strings.Repeat("─", 22)))
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("Puzzle rating:  %d\n", m.record.Rating))
-	sb.WriteString(fmt.Sprintf("Your rating:    %d\n", m.userPuzzleRating))
+	fmt.Fprintf(&sb, "Puzzle rating:  %d\n", m.record.Rating)
+	fmt.Fprintf(&sb, "Your rating:    %d\n", m.userPuzzleRating)
 	if m.hasDelta {
 		sign := "+"
 		if m.lastDelta < 0 {
 			sign = ""
 		}
-		sb.WriteString(fmt.Sprintf("Last change:    %s%d\n", sign, m.lastDelta))
+		fmt.Fprintf(&sb, "Last change:    %s%d\n", sign, m.lastDelta)
 	} else {
 		sb.WriteString(puzzleDimStyle.Render("Last change:    —"))
 		sb.WriteString("\n")

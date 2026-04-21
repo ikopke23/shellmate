@@ -101,41 +101,42 @@ func (m *CreateGameModel) updateCustomMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 
 // Update implements tea.Model.
 func (m *CreateGameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if m.customMode {
-			return m.updateCustomMode(msg)
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	if m.customMode {
+		return m.updateCustomMode(key)
+	}
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
 		}
-		switch msg.String() {
-		case "ctrl+c":
-			return m, tea.Quit
-		case "esc":
-			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(gamePresets)-1 {
-				m.cursor++
-			}
-		case "c":
+	case "down", "j":
+		if m.cursor < len(gamePresets)-1 {
+			m.cursor++
+		}
+	case "c":
+		m.customMode = true
+		m.inputs[0].Focus()
+		m.inputs[1].Blur()
+		m.focusIdx = 0
+	case "enter":
+		p := gamePresets[m.cursor]
+		if p.initialSeconds == -1 {
 			m.customMode = true
 			m.inputs[0].Focus()
 			m.inputs[1].Blur()
 			m.focusIdx = 0
-		case "enter":
-			p := gamePresets[m.cursor]
-			if p.initialSeconds == -1 {
-				m.customMode = true
-				m.inputs[0].Focus()
-				m.inputs[1].Blur()
-				m.focusIdx = 0
-				return m, nil
-			}
-			tc := shared.TimeControl{InitialSeconds: p.initialSeconds, IncrementSeconds: p.incSeconds}
-			return m, func() tea.Msg { return CreateGameMsg{TimeControl: tc} }
+			return m, nil
 		}
+		tc := shared.TimeControl{InitialSeconds: p.initialSeconds, IncrementSeconds: p.incSeconds}
+		return m, func() tea.Msg { return CreateGameMsg{TimeControl: tc} }
 	}
 	return m, nil
 }
