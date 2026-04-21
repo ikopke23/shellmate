@@ -93,10 +93,10 @@ func ClearRenderCache() {
 	}
 }
 
-// RenderCell returns a slice of `rows` ANSI-colored strings for one board cell.
+// Cell returns a slice of `rows` ANSI-colored strings for one board cell.
 // p is the piece on the cell (chess.NoPiece for empty), bgHex is the square background
 // color as a "#RRGGBB" string, cols and rows are the terminal cell dimensions.
-func RenderCell(p chess.Piece, bgHex string, cols, rows int) []string {
+func Cell(p chess.Piece, bgHex string, cols, rows int) []string {
 	cacheKey := cellCacheKey{piece: p, bgHex: bgHex, cols: cols, rows: rows}
 	renderCacheMu.RLock()
 	if cached, ok := renderCache[cacheKey]; ok {

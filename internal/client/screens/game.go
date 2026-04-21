@@ -278,9 +278,11 @@ func (m *GameModel) handleGameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
 	case "u":
-		return m, m.handleUndoKey()
+		cmd := m.handleUndoKey()
+		return m, cmd
 	case "ctrl+r":
-		return m, m.handleResignKey()
+		cmd := m.handleResignKey()
+		return m, cmd
 	case "ctrl+e":
 		osc, filename := pgnClipboardOSC(m.white, m.black, time.Now(), m.chess.String())
 		m.clipboardSeq = osc
@@ -311,10 +313,12 @@ func (m *GameModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "y":
 			m.pendingUndoPrompt = false
-			return m, m.sendUndoResponse(true)
+			cmd := m.sendUndoResponse(true)
+			return m, cmd
 		case "n":
 			m.pendingUndoPrompt = false
-			return m, m.sendUndoResponse(false)
+			cmd := m.sendUndoResponse(false)
+			return m, cmd
 		}
 		return m, nil
 	}

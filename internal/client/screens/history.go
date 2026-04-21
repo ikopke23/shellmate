@@ -96,7 +96,8 @@ func (m *HistoryModel) View() string {
 	if len(m.games) == 0 {
 		sb.WriteString("  No games played yet.\n")
 	}
-	for i, g := range m.games {
+	for i := range m.games {
+		g := &m.games[i]
 		cursor := "  "
 		if i == m.cursor {
 			cursor = historyCursorStyle.Render("> ")
