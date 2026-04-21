@@ -1,3 +1,5 @@
+// Package client implements the Bubble Tea TUI model and screen routing
+// for the shellmate client.
 package client
 
 import (
@@ -10,10 +12,12 @@ import (
 	"github.com/notnil/chess"
 )
 
-type historyLoadedMsg struct{ records []shared.HistoryRecord }
-type leaderboardLoadedMsg struct{ players []shared.PlayerInfo }
-type importedGamesLoadedMsg struct{ records []shared.HistoryRecord }
-type puzzleLoadedMsg struct{ record shared.PuzzleRecord }
+type (
+	historyLoadedMsg       struct{ records []shared.HistoryRecord }
+	leaderboardLoadedMsg   struct{ players []shared.PlayerInfo }
+	importedGamesLoadedMsg struct{ records []shared.HistoryRecord }
+	puzzleLoadedMsg        struct{ record shared.PuzzleRecord }
+)
 
 // Model is the root bubbletea model for an authenticated SSH session.
 type Model struct {
@@ -284,6 +288,8 @@ func (m Model) updateSecondaryScreen(msg tea.Msg) (Model, tea.Cmd, bool) {
 			m.createGame = cgm
 		}
 		return m, cmd, true
+	case screens.ScreenLobby, screens.ScreenGame, screens.ScreenReplay, screens.ScreenImport, screens.ScreenPuzzle:
+		return m, nil, false
 	}
 	return m, nil, false
 }
@@ -323,6 +329,8 @@ func (m Model) updateActiveScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.importScreen = im
 		}
 		return m, cmd
+	case screens.ScreenHistory, screens.ScreenLeaderboard, screens.ScreenImportedGames, screens.ScreenCreateGame:
+		return m, nil
 	}
 	return m, nil
 }
@@ -402,6 +410,7 @@ func (m Model) viewSecondaryScreen() string {
 		if m.createGame != nil {
 			return m.createGame.View()
 		}
+	case screens.ScreenLobby, screens.ScreenGame, screens.ScreenReplay, screens.ScreenImport, screens.ScreenPuzzle:
 	}
 	return ""
 }
@@ -428,6 +437,7 @@ func (m Model) viewForScreen() string {
 		if m.importScreen != nil {
 			return m.importScreen.View()
 		}
+	case screens.ScreenHistory, screens.ScreenLeaderboard, screens.ScreenImportedGames, screens.ScreenCreateGame:
 	}
 	return m.viewSecondaryScreen()
 }
@@ -492,7 +502,8 @@ func (m Model) fetchImportedGames() tea.Cmd {
 
 func toSharedHistoryRecords(records []server.HistoryRecord) []shared.HistoryRecord {
 	result := make([]shared.HistoryRecord, len(records))
-	for i, r := range records {
+	for i := range records {
+		r := &records[i]
 		result[i] = shared.HistoryRecord{
 			ID:             r.ID,
 			White:          r.White,

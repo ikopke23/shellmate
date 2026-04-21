@@ -68,7 +68,7 @@ type PuzzleRow struct {
 
 // NewDB connects to Postgres using connStr, applies the migration at migrationSQL, and returns a DB.
 // migrationSQL is the content of migrations/001_init.sql passed as a string (server reads it at startup).
-func NewDB(ctx context.Context, connStr string, migrationSQL string) (*DB, error) {
+func NewDB(ctx context.Context, connStr, migrationSQL string) (*DB, error) {
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
 		return nil, err
@@ -136,7 +136,7 @@ func (d *DB) CreateUserWithKey(ctx context.Context, username, fingerprint string
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, `INSERT INTO users (username) VALUES ($1)`, username); err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func (d *DB) CreateUserWithKey(ctx context.Context, username, fingerprint string
 	); err != nil {
 		return nil, err
 	}
-	if err = tx.Commit(ctx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return d.GetUser(ctx, username)
@@ -427,7 +427,8 @@ func (d *DB) BulkSavePuzzles(ctx context.Context, puzzles []PuzzleRow) (err erro
 		return nil
 	}
 	batch := &pgx.Batch{}
-	for _, p := range puzzles {
+	for i := range puzzles {
+		p := &puzzles[i]
 		batch.Queue(
 			`INSERT INTO puzzles (id, fen, moves, context_moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)

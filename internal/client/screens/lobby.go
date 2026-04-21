@@ -76,9 +76,11 @@ func (m *LobbyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "enter":
-			return m, m.joinGame()
+			cmd := m.joinGame()
+			return m, cmd
 		case "s":
-			return m, m.spectateGame()
+			cmd := m.spectateGame()
+			return m, cmd
 		case "l":
 			return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLeaderboard} }
 		case "h":
@@ -126,7 +128,7 @@ func (m *LobbyModel) View() string {
 		if p.Online {
 			status = "*"
 		}
-		sb.WriteString(fmt.Sprintf("  %s %-16s %d\n", status, p.Username, p.Elo))
+		fmt.Fprintf(&sb, "  %s %-16s %d\n", status, p.Username, p.Elo)
 	}
 	sb.WriteString("\n")
 	// Games
@@ -144,8 +146,8 @@ func (m *LobbyModel) View() string {
 		if black == "" {
 			black = "(waiting)"
 		}
-		sb.WriteString(fmt.Sprintf("%s%-12s vs %-12s  moves:%d  spectators:%d\n",
-			cursor, g.White, black, g.Moves, g.Spectators))
+		fmt.Fprintf(&sb, "%s%-12s vs %-12s  moves:%d  spectators:%d\n",
+			cursor, g.White, black, g.Moves, g.Spectators)
 	}
 	sb.WriteString("\n")
 	if m.err != "" {

@@ -104,10 +104,10 @@ func buildKittyUpload(img *image.RGBA, id uint8, w io.Writer) {
 			moreFlag = "0"
 		}
 		if i == 0 {
-			fmt.Fprintf(w, "\033_Ga=T,q=2,f=32,s=%d,v=%d,U=1,i=%d,m=%s;%s\033\\",
+			_, _ = fmt.Fprintf(w, "\033_Ga=T,q=2,f=32,s=%d,v=%d,U=1,i=%d,m=%s;%s\033\\",
 				width, height, id, moreFlag, chunk)
 		} else {
-			fmt.Fprintf(w, "\033_Gm=%s;%s\033\\", moreFlag, chunk)
+			_, _ = fmt.Fprintf(w, "\033_Gm=%s;%s\033\\", moreFlag, chunk)
 		}
 	}
 }
@@ -199,8 +199,8 @@ func clearKittyCache(w io.Writer) {
 	kittyCacheMu.Lock()
 	defer kittyCacheMu.Unlock()
 	if len(kittyCacheMap) > 0 {
-		fmt.Fprintf(w, "\033_Ga=d,d=I,i=1\033\\")
-		fmt.Fprintf(w, "\033_Ga=d,d=I,i=2\033\\")
+		_, _ = fmt.Fprintf(w, "\033_Ga=d,d=I,i=1\033\\")
+		_, _ = fmt.Fprintf(w, "\033_Ga=d,d=I,i=2\033\\")
 		kittyCacheMap = map[kittyCacheKey]string{}
 	}
 }
@@ -223,7 +223,7 @@ func renderBoardKitty(b *Board, w io.Writer) string {
 	img := composeBoard(b)
 	buildKittyUpload(img, newID, w)
 	// Delete the old image to free terminal memory.
-	fmt.Fprintf(w, "\033_Ga=d,d=I,i=%d\033\\", oldID)
+	_, _ = fmt.Fprintf(w, "\033_Ga=d,d=I,i=%d\033\\", oldID)
 
 	placeholder := buildPlaceholderString(b, newID)
 

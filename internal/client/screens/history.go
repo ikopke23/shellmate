@@ -96,7 +96,8 @@ func (m *HistoryModel) View() string {
 	if len(m.games) == 0 {
 		sb.WriteString("  No games played yet.\n")
 	}
-	for i, g := range m.games {
+	for i := range m.games {
+		g := &m.games[i]
 		cursor := "  "
 		if i == m.cursor {
 			cursor = historyCursorStyle.Render("> ")
@@ -105,8 +106,8 @@ func (m *HistoryModel) View() string {
 		if g.Imported {
 			result += " [imported]"
 		}
-		sb.WriteString(fmt.Sprintf("%s%-12s vs %-12s  %s  %s\n",
-			cursor, g.White, g.Black, result, g.PlayedAt.Format("2006-01-02 15:04")))
+		fmt.Fprintf(&sb, "%s%-12s vs %-12s  %s  %s\n",
+			cursor, g.White, g.Black, result, g.PlayedAt.Format("2006-01-02 15:04"))
 	}
 	sb.WriteString("\n")
 	if m.exportMsg != "" {

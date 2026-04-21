@@ -278,9 +278,11 @@ func (m *GameModel) handleGameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		return m, func() tea.Msg { return ScreenChangeMsg{Screen: ScreenLobby} }
 	case "u":
-		return m, m.handleUndoKey()
+		cmd := m.handleUndoKey()
+		return m, cmd
 	case "ctrl+r":
-		return m, m.handleResignKey()
+		cmd := m.handleResignKey()
+		return m, cmd
 	case "ctrl+e":
 		osc, filename := pgnClipboardOSC(m.white, m.black, time.Now(), m.chess.String())
 		m.clipboardSeq = osc
@@ -311,14 +313,32 @@ func (m *GameModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "y":
 			m.pendingUndoPrompt = false
-			return m, m.sendUndoResponse(true)
+			cmd := m.sendUndoResponse(true)
+			return m, cmd
 		case "n":
 			m.pendingUndoPrompt = false
-			return m, m.sendUndoResponse(false)
+			cmd := m.sendUndoResponse(false)
+			return m, cmd
 		}
 		return m, nil
 	}
 	return m.handleGameKey(msg)
+}
+
+// tickClocks advances the active side's remaining time by one second and
+// returns a follow-up clockTick command, or nil if the game isn't timed/over.
+func (m *GameModel) tickClocks() tea.Cmd {
+	if !m.timed || m.gameOver {
+		return nil
+	}
+	if m.chess.Position().Turn() == chess.White {
+		if m.whiteMs > 0 {
+			m.whiteMs -= 1000
+		}
+	} else if m.blackMs > 0 {
+		m.blackMs -= 1000
+	}
+	return clockTick()
 }
 
 // Update implements tea.Model.
@@ -329,17 +349,8 @@ func (m *GameModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 	case clockTickMsg:
-		if m.timed && !m.gameOver {
-			if m.chess.Position().Turn() == chess.White {
-				if m.whiteMs > 0 {
-					m.whiteMs -= 1000
-				}
-			} else {
-				if m.blackMs > 0 {
-					m.blackMs -= 1000
-				}
-			}
-			return m, clockTick()
+		if cmd := m.tickClocks(); cmd != nil {
+			return m, cmd
 		}
 	case ErrMsg:
 		m.err = msg.Err.Error()

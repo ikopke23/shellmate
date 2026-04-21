@@ -29,6 +29,7 @@ type ImportModel struct {
 	err      string
 }
 
+// NewImportModel creates a new PGN import screen.
 func NewImportModel() *ImportModel {
 	ta := textarea.New()
 	ta.Placeholder = "Paste PGN or enter file path..."
@@ -50,14 +51,15 @@ func detectImportMode(text string) string {
 	return "pgn text"
 }
 
+// Init implements tea.Model.
 func (m *ImportModel) Init() tea.Cmd {
 	return textarea.Blink
 }
 
+// Update implements tea.Model.
 func (m *ImportModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
+	if key, ok := msg.(tea.KeyMsg); ok {
+		switch key.String() {
 		case "ctrl+s":
 			return m.submit()
 		case "esc":
@@ -84,7 +86,7 @@ func (m *ImportModel) submit() (tea.Model, tea.Cmd) {
 			home, _ := os.UserHomeDir()
 			path = home + path[1:]
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // path is user-supplied by design: this screen lets the user pick a local PGN to import
 		if err != nil {
 			m.err = "could not read file: " + err.Error()
 			return m, nil
@@ -99,6 +101,7 @@ func (m *ImportModel) submit() (tea.Model, tea.Cmd) {
 	}
 }
 
+// View implements tea.Model.
 func (m *ImportModel) View() string {
 	var sb strings.Builder
 	sb.WriteString(importTitleStyle.Render("Import PGN"))

@@ -1,8 +1,12 @@
+// Package screens contains the Bubble Tea models for each TUI screen
+// (lobby, game, replay, puzzle, etc.) and the messages used to navigate
+// between them.
 package screens
 
 // ScreenID identifies a TUI screen.
 type ScreenID int
 
+// Screen identifiers used by ScreenChangeMsg to request a transition.
 const (
 	ScreenLobby ScreenID = iota
 	ScreenGame

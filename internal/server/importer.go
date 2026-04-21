@@ -68,19 +68,41 @@ func insertBatch(ctx context.Context, db *DB, batch []PuzzleRow) (int, error) {
 	return len(batch), nil
 }
 
+// handleRow parses one CSV row, applies the rating filter, and appends to batch.
+// Returns the (possibly-extended) batch and whether the row was skipped.
+func handleRow(cols []string, batch []PuzzleRow) (next []PuzzleRow, skipped bool) {
+	row, parseErr := parsePuzzleCSVRow(cols)
+	if parseErr != nil {
+		slog.Warn("skipping unparseable row", "error", parseErr)
+		return batch, true
+	}
+	if row.Rating < importMinRating || row.Rating > importMaxRating {
+		return batch, true
+	}
+	return append(batch, *row), false
+}
+
+// flushBatch inserts batch into the DB and returns the number inserted.
+// Callers should reset batch to batch[:0] on success.
+func flushBatch(ctx context.Context, db *DB, batch []PuzzleRow) (int, error) {
+	if len(batch) == 0 {
+		return 0, nil
+	}
+	return insertBatch(ctx, db, batch)
+}
+
 // RunImport streams the Lichess puzzle CSV at csvPath, filters by rating band,
 // and bulk-inserts into the DB in batches of importBatchSize.
 // Malformed rows are logged and skipped. Any DB error causes immediate exit.
 // Returns counts of (processed, inserted, skipped).
 func RunImport(ctx context.Context, db *DB, csvPath string) (processed, inserted, skipped int, err error) {
-	f, err := os.Open(csvPath)
+	f, err := os.Open(csvPath) //nolint:gosec // csvPath is an operator-supplied CLI argument for offline puzzle import
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("open csv: %w", err)
 	}
 	defer f.Close() //nolint:errcheck
 	r := csv.NewReader(f)
 	r.FieldsPerRecord = -1 // allow variable columns; we validate manually
-	// Skip header row
 	if _, err := r.Read(); err != nil {
 		return 0, 0, 0, fmt.Errorf("read header: %w", err)
 	}
@@ -97,19 +119,14 @@ func RunImport(ctx context.Context, db *DB, csvPath string) (processed, inserted
 			continue
 		}
 		processed++
-		row, parseErr := parsePuzzleCSVRow(cols)
-		if parseErr != nil {
-			slog.Warn("skipping unparseable row", "error", parseErr)
+		var rowSkipped bool
+		batch, rowSkipped = handleRow(cols, batch)
+		if rowSkipped {
 			skipped++
 			continue
 		}
-		if row.Rating < importMinRating || row.Rating > importMaxRating {
-			skipped++
-			continue
-		}
-		batch = append(batch, *row)
 		if len(batch) >= importBatchSize {
-			n, bulkErr := insertBatch(ctx, db, batch)
+			n, bulkErr := flushBatch(ctx, db, batch)
 			if bulkErr != nil {
 				return processed, inserted, skipped, bulkErr
 			}
@@ -120,12 +137,10 @@ func RunImport(ctx context.Context, db *DB, csvPath string) (processed, inserted
 			slog.Info("import progress", "processed", processed, "inserted", inserted, "skipped", skipped)
 		}
 	}
-	if len(batch) > 0 {
-		n, bulkErr := insertBatch(ctx, db, batch)
-		if bulkErr != nil {
-			return processed, inserted, skipped, bulkErr
-		}
-		inserted += n
+	n, bulkErr := flushBatch(ctx, db, batch)
+	if bulkErr != nil {
+		return processed, inserted, skipped, bulkErr
 	}
+	inserted += n
 	return processed, inserted, skipped, nil
 }

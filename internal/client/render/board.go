@@ -1,3 +1,5 @@
+// Package render produces ANSI and Kitty-graphics renderings of the chess
+// board, pieces, and move list for the shellmate client.
 package render
 
 import (
@@ -159,7 +161,7 @@ func (b *Board) View() string {
 			sq := chess.Square(rankIdx*8 + fileIdx)
 			bgHex := b.squareBgHex(sq, fileIdx, rankIdx)
 			p := board.Piece(sq)
-			cells[i] = cellInfo{bgHex: bgHex, lines: RenderCell(p, bgHex, b.cellCols, b.cellRows)}
+			cells[i] = cellInfo{bgHex: bgHex, lines: Cell(p, bgHex, b.cellCols, b.cellRows)}
 		}
 		midLine := b.cellRows / 2
 		for line := 0; line < b.cellRows; line++ {
@@ -174,6 +176,12 @@ func (b *Board) View() string {
 			sb.WriteString("\n")
 		}
 	}
+	b.renderFileLabels(&sb, fileOrder, labelStyle)
+	return sb.String()
+}
+
+// renderFileLabels appends the bottom file-label row for the current flip state.
+func (b *Board) renderFileLabels(sb *strings.Builder, fileOrder [8]int, labelStyle lipgloss.Style) {
 	sb.WriteString("  ")
 	for _, fileIdx := range fileOrder {
 		label := string(rune('a' + fileIdx))
@@ -182,5 +190,4 @@ func (b *Board) View() string {
 		sb.WriteString(labelStyle.Render(strings.Repeat(" ", leftPad) + label + strings.Repeat(" ", rightPad)))
 	}
 	sb.WriteString("\n")
-	return sb.String()
 }

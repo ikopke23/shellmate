@@ -22,6 +22,8 @@ type LocalMoveInput struct {
 	flipped          bool
 }
 
+// NewLocalMoveInput creates a new move-input helper. flipped indicates whether
+// the board is rendered from black's perspective.
 func NewLocalMoveInput(flipped bool) *LocalMoveInput {
 	ti := textinput.New()
 	ti.Placeholder = "Type move (e.g. e4)"
@@ -31,14 +33,17 @@ func NewLocalMoveInput(flipped bool) *LocalMoveInput {
 	return &LocalMoveInput{textInput: ti, flipped: flipped}
 }
 
+// Init implements tea.Model.
 func (li *LocalMoveInput) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+// SetPromoPopupY positions the promotion popup relative to the board bottom.
 func (li *LocalMoveInput) SetPromoPopupY(y int) {
 	li.promoPopupY = y
 }
 
+// PendingPromo reports whether a promotion selection is awaiting user input.
 func (li *LocalMoveInput) PendingPromo() bool {
 	return li.pendingPromo
 }
@@ -267,7 +272,7 @@ func promoPopupView(board *render.Board, game *chess.Game) string {
 		sb.WriteString("  ")
 		for i, opt := range opts {
 			p := chess.NewPiece(opt.pt, myColor)
-			lines := render.RenderCell(p, bgs[i], cols, rows)
+			lines := render.Cell(p, bgs[i], cols, rows)
 			sb.WriteString(lines[line])
 		}
 		sb.WriteString("\n")

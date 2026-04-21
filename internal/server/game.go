@@ -218,7 +218,7 @@ func (g *Game) BroadcastMove() {
 	notation := chess.AlgebraicNotation{}
 	positions := g.chess.Positions()
 	moves := g.chess.Moves()
-	var moveList []string
+	moveList := make([]string, 0, len(moves))
 	for i, m := range moves {
 		moveList = append(moveList, notation.Encode(positions[i], m))
 	}
@@ -256,7 +256,7 @@ func (g *Game) BroadcastUndoAccepted() {
 	notation := chess.AlgebraicNotation{}
 	positions := g.chess.Positions()
 	moves := g.chess.Moves()
-	var moveList []string
+	moveList := make([]string, 0, len(moves))
 	for i, m := range moves {
 		moveList = append(moveList, notation.Encode(positions[i], m))
 	}
@@ -329,7 +329,7 @@ func (g *Game) handleGameOver(ctx context.Context, hub *Hub) {
 		result = 1.0
 	case chess.BlackWon:
 		result = 0.0
-	default:
+	case chess.NoOutcome, chess.Draw:
 		result = 0.5
 	}
 	whiteUser, err := hub.db.GetUser(ctx, g.white.username)
