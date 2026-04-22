@@ -163,13 +163,14 @@ func (h *Hub) GetPuzzleForUser(ctx context.Context, username string) (*PuzzleRow
 	} else {
 		slog.Info("serving cached puzzle", "puzzle_id", puzzle.ID, "username", username)
 	}
-	// background prefetch if buffer is low
+	// background prefetch if buffer is low; WithoutCancel inherits values but survives request cancellation
+	bgCtx := context.WithoutCancel(ctx)
 	go func() {
-		count, err := h.db.CountUnseenPuzzles(context.Background(), username)
+		count, err := h.db.CountUnseenPuzzles(bgCtx, username)
 		if err != nil || count >= 3 {
 			return
 		}
-		resp, err := fetchDailyPuzzle(context.Background())
+		resp, err := fetchDailyPuzzle(bgCtx)
 		if err != nil {
 			slog.Warn("background puzzle prefetch failed", "error", err)
 			return
@@ -178,7 +179,7 @@ func (h *Hub) GetPuzzleForUser(ctx context.Context, username string) (*PuzzleRow
 		if err != nil {
 			return
 		}
-		if err := h.db.SavePuzzle(context.Background(), *row); err != nil {
+		if err := h.db.SavePuzzle(bgCtx, *row); err != nil {
 			slog.Warn("background puzzle save failed", "error", err)
 		}
 	}()

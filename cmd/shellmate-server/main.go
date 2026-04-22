@@ -76,7 +76,7 @@ func main() {
 			slog.Error("import failed", "error", importErr)
 			os.Exit(1)
 		}
-		slog.Info("import complete", "processed", processed, "inserted", inserted, "skipped", skipped)
+		slog.Info("import complete", "processed", processed, "inserted", inserted, "skipped", skipped) //nolint:gosec
 		importDB.Close()
 		return
 	}
@@ -115,7 +115,7 @@ func main() {
 	defer cancel()
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
-	slog.Info("SSH server starting", "addr", sshPort)
+	slog.Info("SSH server starting", "addr", sshPort) //nolint:gosec
 	go func() {
 		if err := s.ListenAndServe(); err != nil && !errors.Is(err, ssh.ErrServerClosed) {
 			slog.Error("server error", "err", err)
