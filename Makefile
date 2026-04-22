@@ -8,7 +8,7 @@ ifeq ($(GO),)
 $(error Go not found in PATH)
 endif
 
-.PHONY: build install uninstall test vet lint fix fmt fmt-check clean
+.PHONY: build install uninstall test vet lint fix fmt fmt-check coverage clean
 
 build:
 	$(GO) build -o bin/$(BINARY) ./cmd/$(BINARY)
@@ -52,6 +52,10 @@ endif
 		$(GOFUMPT) -l .; \
 		exit 1; \
 	fi
+
+coverage:
+	$(GO) test -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out
 
 clean:
 	rm -rf bin/
