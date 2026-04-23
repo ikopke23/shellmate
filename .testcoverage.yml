@@ -40,7 +40,7 @@ exclude:
   paths:
     - \.pb\.go$    # excludes all protobuf generated files
     - ^pkg/bar     # exclude package `pkg/bar`
-    -  **/*_test.go
+    - '**/*_test.go'
     - migrations/**
     
 
