@@ -441,7 +441,8 @@ func (m *ReplayModel) View() string {
 		case 2:
 			name := m.saveUnknownNames[m.saveConfirmIdx]
 			sb.WriteString(importErrStyle.Render(fmt.Sprintf(
-				"Warning: '%s' not found — will create new user. Typos won't appear in the right history. Confirm? (y/n)", name)))
+				"Warning: '%s' not found — will create new user. Typos won't appear in the right history. Confirm? (y/n)", name,
+			)))
 		}
 		sb.WriteString("\n")
 	}

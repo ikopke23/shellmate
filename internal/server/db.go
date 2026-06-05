@@ -87,7 +87,8 @@ func (d *DB) Close() {
 
 // CreateUser inserts a new user with default Elo 1500. Returns error if username already exists.
 func (d *DB) CreateUser(ctx context.Context, username string) error {
-	_, err := d.pool.Exec(ctx,
+	_, err := d.pool.Exec(
+		ctx,
 		`INSERT INTO users (username) VALUES ($1)`,
 		username,
 	)
@@ -97,7 +98,8 @@ func (d *DB) CreateUser(ctx context.Context, username string) error {
 // GetUser returns the user row for the given username. Returns nil, nil if not found.
 func (d *DB) GetUser(ctx context.Context, username string) (*User, error) {
 	u := &User{}
-	err := d.pool.QueryRow(ctx,
+	err := d.pool.QueryRow(
+		ctx,
 		`SELECT id, username, elo, games_played FROM users WHERE username = $1`,
 		username,
 	).Scan(&u.ID, &u.Username, &u.Elo, &u.GamesPlayed)
@@ -114,7 +116,8 @@ func (d *DB) GetUser(ctx context.Context, username string) (*User, error) {
 // or nil, nil if no such key exists.
 func (d *DB) GetUserByKeyFingerprint(ctx context.Context, fingerprint string) (*User, error) {
 	u := &User{}
-	err := d.pool.QueryRow(ctx,
+	err := d.pool.QueryRow(
+		ctx,
 		`SELECT u.id, u.username, u.elo, u.games_played
 		 FROM user_ssh_keys k
 		 JOIN users u ON u.username = k.username
@@ -140,7 +143,8 @@ func (d *DB) CreateUserWithKey(ctx context.Context, username, fingerprint string
 	if _, err = tx.Exec(ctx, `INSERT INTO users (username) VALUES ($1)`, username); err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(ctx,
+	if _, err = tx.Exec(
+		ctx,
 		`INSERT INTO user_ssh_keys (username, fingerprint) VALUES ($1, $2)`,
 		username, fingerprint,
 	); err != nil {
@@ -154,7 +158,8 @@ func (d *DB) CreateUserWithKey(ctx context.Context, username, fingerprint string
 
 // LinkKeyToUser adds an SSH key fingerprint to an existing user's account.
 func (d *DB) LinkKeyToUser(ctx context.Context, username, fingerprint string) error {
-	_, err := d.pool.Exec(ctx,
+	_, err := d.pool.Exec(
+		ctx,
 		`INSERT INTO user_ssh_keys (username, fingerprint) VALUES ($1, $2)`,
 		username, fingerprint,
 	)
@@ -168,14 +173,16 @@ func (d *DB) SaveGameAndUpdateElo(ctx context.Context, g GameRecord, whiteElo, b
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(ctx,
+	if _, err = tx.Exec(
+		ctx,
 		`INSERT INTO games (white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		g.White, g.Black, g.Result, g.WhiteEloBefore, g.BlackEloBefore, g.WhiteEloAfter, g.BlackEloAfter, g.PGN,
 	); err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx,
+	tag, err := tx.Exec(
+		ctx,
 		`UPDATE users SET elo = $1, games_played = games_played + 1 WHERE username = $2`,
 		whiteElo, g.White,
 	)
@@ -185,7 +192,8 @@ func (d *DB) SaveGameAndUpdateElo(ctx context.Context, g GameRecord, whiteElo, b
 	if tag.RowsAffected() != 1 {
 		return fmt.Errorf("user not found: %s", g.White)
 	}
-	tag, err = tx.Exec(ctx,
+	tag, err = tx.Exec(
+		ctx,
 		`UPDATE users SET elo = $1, games_played = games_played + 1 WHERE username = $2`,
 		blackElo, g.Black,
 	)
@@ -200,7 +208,8 @@ func (d *DB) SaveGameAndUpdateElo(ctx context.Context, g GameRecord, whiteElo, b
 
 // GetGameHistory returns the 100 most recent games where username is white or black, ordered by played_at DESC.
 func (d *DB) GetGameHistory(ctx context.Context, username string) ([]HistoryRecord, error) {
-	rows, err := d.pool.Query(ctx,
+	rows, err := d.pool.Query(
+		ctx,
 		`SELECT id, white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn, played_at, imported
 		 FROM games
 		 WHERE white = $1 OR black = $1
@@ -225,7 +234,8 @@ func (d *DB) GetGameHistory(ctx context.Context, username string) ([]HistoryReco
 
 // GetLeaderboard returns the top 200 users ordered by Elo DESC.
 func (d *DB) GetLeaderboard(ctx context.Context) ([]User, error) {
-	rows, err := d.pool.Query(ctx,
+	rows, err := d.pool.Query(
+		ctx,
 		`SELECT id, username, elo, games_played FROM users ORDER BY elo DESC LIMIT 200`,
 	)
 	if err != nil {
@@ -267,7 +277,8 @@ func (d *DB) SaveImportedGame(ctx context.Context, white, black, pgn string, for
 			}
 		}
 	}
-	_, err := d.pool.Exec(ctx,
+	_, err := d.pool.Exec(
+		ctx,
 		`INSERT INTO games (white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn, imported)
 		 VALUES ($1, $2, 'imported', 0, 0, 0, 0, $3, true)`,
 		white, black, pgn,
@@ -277,7 +288,8 @@ func (d *DB) SaveImportedGame(ctx context.Context, white, black, pgn string, for
 
 // GetImportedGames returns the 100 most recent imported games, ordered by played_at DESC.
 func (d *DB) GetImportedGames(ctx context.Context) ([]HistoryRecord, error) {
-	rows, err := d.pool.Query(ctx,
+	rows, err := d.pool.Query(
+		ctx,
 		`SELECT id, white, black, result, white_elo_before, black_elo_before, white_elo_after, black_elo_after, pgn, played_at, imported
 		 FROM games
 		 WHERE imported = true
@@ -301,7 +313,8 @@ func (d *DB) GetImportedGames(ctx context.Context) ([]HistoryRecord, error) {
 
 // SavePuzzle inserts a puzzle into the cache. Silently skips if the ID already exists.
 func (d *DB) SavePuzzle(ctx context.Context, p PuzzleRow) error {
-	_, err := d.pool.Exec(ctx,
+	_, err := d.pool.Exec(
+		ctx,
 		`INSERT INTO puzzles (id, fen, moves, context_moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 ON CONFLICT (id) DO NOTHING`,
@@ -317,7 +330,8 @@ func (d *DB) SavePuzzle(ctx context.Context, p PuzzleRow) error {
 // Returns nil, nil if no unseen puzzles exist.
 func (d *DB) GetNextPuzzle(ctx context.Context, username string, userRating int) (*PuzzleRow, error) {
 	p := &PuzzleRow{}
-	err := d.pool.QueryRow(ctx,
+	err := d.pool.QueryRow(
+		ctx,
 		`SELECT id, fen, moves, context_moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date
 		 FROM puzzles
 		 WHERE id NOT IN (SELECT puzzle_id FROM user_puzzle_attempts WHERE username = $1)
@@ -335,7 +349,8 @@ func (d *DB) GetNextPuzzle(ctx context.Context, username string, userRating int)
 	}
 	// Stage 2: any unseen puzzle
 	p = &PuzzleRow{}
-	err = d.pool.QueryRow(ctx,
+	err = d.pool.QueryRow(
+		ctx,
 		`SELECT id, fen, moves, context_moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date
 		 FROM puzzles
 		 WHERE id NOT IN (SELECT puzzle_id FROM user_puzzle_attempts WHERE username = $1)
@@ -356,7 +371,8 @@ func (d *DB) GetNextPuzzle(ctx context.Context, username string, userRating int)
 // CountUnseenPuzzles returns how many cached puzzles the user has not yet attempted.
 func (d *DB) CountUnseenPuzzles(ctx context.Context, username string) (int, error) {
 	var n int
-	err := d.pool.QueryRow(ctx,
+	err := d.pool.QueryRow(
+		ctx,
 		`SELECT COUNT(*) FROM puzzles
 		 WHERE id NOT IN (SELECT puzzle_id FROM user_puzzle_attempts WHERE username = $1)`,
 		username,
@@ -372,14 +388,16 @@ func (d *DB) RecordAttemptAndUpdateRating(ctx context.Context, username, puzzleI
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(ctx,
+	if _, err = tx.Exec(
+		ctx,
 		`INSERT INTO user_puzzle_attempts (username, puzzle_id, solved, skipped) VALUES ($1, $2, $3, $4)`,
 		username, puzzleID, solved, skipped,
 	); err != nil {
 		return err
 	}
 	if !skipped {
-		if _, err = tx.Exec(ctx,
+		if _, err = tx.Exec(
+			ctx,
 			`UPDATE users SET puzzle_rating = $1 WHERE username = $2`,
 			newRating, username,
 		); err != nil {
@@ -392,7 +410,8 @@ func (d *DB) RecordAttemptAndUpdateRating(ctx context.Context, username, puzzleI
 // GetPuzzleRating returns the user's current puzzle rating. Returns 1500 if user not found.
 func (d *DB) GetPuzzleRating(ctx context.Context, username string) (int, error) {
 	var rating int
-	err := d.pool.QueryRow(ctx,
+	err := d.pool.QueryRow(
+		ctx,
 		`SELECT puzzle_rating FROM users WHERE username = $1`,
 		username,
 	).Scan(&rating)
@@ -405,7 +424,8 @@ func (d *DB) GetPuzzleRating(ctx context.Context, username string) (int, error) 
 // GetPuzzleByID returns the puzzle with the given ID, or nil if not found.
 func (d *DB) GetPuzzleByID(ctx context.Context, id string) (*PuzzleRow, error) {
 	p := &PuzzleRow{}
-	err := d.pool.QueryRow(ctx,
+	err := d.pool.QueryRow(
+		ctx,
 		`SELECT id, fen, moves, context_moves, rating, rating_dev, popularity, nb_plays, themes, game_url, opening_tags, puzzle_date
 		 FROM puzzles WHERE id = $1`,
 		id,
