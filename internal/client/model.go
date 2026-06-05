@@ -4,6 +4,7 @@ package client
 
 import (
 	"context"
+	"io"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ikopke/shellmate/internal/client/screens"
@@ -35,20 +36,30 @@ type Model struct {
 	puzzle        *screens.PuzzleModel
 	createGame    *screens.CreateGameModel
 	width, height int
+	// focused tracks terminal focus via DEC 1004 focus reporting. Defaults to
+	// true so that when focus reporting is unsupported we never spuriously alert.
+	focused bool
+	// out is the terminal writer for out-of-band alerts (nil disables them).
+	out io.Writer
 }
 
 // NewModel creates the root model starting at the lobby screen.
 func NewModel(hub *server.Hub, client *server.Client, user *server.User, w, h int) Model {
 	return Model{
-		screen: screens.ScreenLobby,
-		hub:    hub,
-		client: client,
-		user:   user,
-		lobby:  screens.NewLobbyModel(user.Username),
-		width:  w,
-		height: h,
+		screen:  screens.ScreenLobby,
+		hub:     hub,
+		client:  client,
+		user:    user,
+		lobby:   screens.NewLobbyModel(user.Username),
+		width:   w,
+		height:  h,
+		focused: true,
 	}
 }
+
+// WithNotifier sets the terminal writer used for out-of-band alerts (e.g. the
+// SSH session) and returns the updated model.
+func (m Model) WithNotifier(w io.Writer) Model { m.out = w; return m }
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
@@ -70,6 +81,9 @@ func (m Model) handleServerError(msg shared.ErrorMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleGameLifecycleMsg(msg tea.Msg) (Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case shared.GameStart:
+		if shouldNotifyJoin(m.focused, msg, m.user.Username) {
+			notify(m.out, "shellmate: opponent joined your game")
+		}
 		var myColor chess.Color
 		switch m.user.Username {
 		case msg.White:
@@ -239,6 +253,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		return m, nil
+	case tea.FocusMsg:
+		m.focused = true
+		return m, nil
+	case tea.BlurMsg:
+		m.focused = false
 		return m, nil
 	case shared.LobbyState:
 		if m.lobby != nil {

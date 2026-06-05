@@ -1,4 +1,4 @@
-BINARY      := shellmate
+BINARY      := shellmate-server
 DESTDIR     := /usr/local/bin
 GO          := $(shell which go)
 GOFUMPT     := $(shell which gofumpt)

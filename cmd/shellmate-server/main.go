@@ -33,7 +33,7 @@ func newTeaHandler(hub *server.Hub) bm.Handler {
 		fingerprint := gossh.FingerprintSHA256(s.PublicKey())
 		ctx := s.Context()
 		w, h := pty.Window.Width, pty.Window.Height
-		opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion()}
+		opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus()}
 		user, err := hub.GetUserByKeyFingerprint(ctx, fingerprint)
 		if err != nil {
 			slog.Error("fingerprint lookup failed", "err", err)
@@ -43,7 +43,7 @@ func newTeaHandler(hub *server.Hub) bm.Handler {
 			return client.NewRegistrationModel(hub, fingerprint, w, h), opts
 		}
 		c := hub.Register(user.Username)
-		return client.NewModel(hub, c, user, w, h), opts
+		return client.NewModel(hub, c, user, w, h).WithNotifier(s), opts
 	}
 }
 
