@@ -17,7 +17,6 @@ The server hosts the entire UI. Your SSH key *is* your account.
 - **Game history & in-app replay** — step through past games move by move
 - **Elo leaderboard** — provisional K-factor for new players, rating floor, capped per-game swing
 - **Puzzle mode** — rating-matched Lichess puzzles (±200 Elo band), computer plays the replies, board auto-flips for black-to-move, press `s` to reveal the solution after a miss
-- **Undo requests** — offer to retract a move; opponent accepts or rejects
 - **PGN import** — bring in external games and replay them
 - **Graphical pieces** via the kitty graphics protocol (with ASCII fallback)
 
