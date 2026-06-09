@@ -255,6 +255,18 @@ func (m *ReplayModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// SetBoardCellSize sets the board zoom (cell height in rows); no-op below the
+// minimum. Columns are always twice the rows.
+func (m *ReplayModel) SetBoardCellSize(rows int) {
+	if rows < 2 {
+		return
+	}
+	m.board.SetCellSize(rows*2, rows)
+}
+
+// BoardCellRows returns the current board zoom (cell height in rows).
+func (m *ReplayModel) BoardCellRows() int { return m.board.CellRows() }
+
 func (m *ReplayModel) replayResizeSmaller() {
 	rows := m.board.CellRows()
 	if rows > 2 {
@@ -331,8 +343,12 @@ func (m *ReplayModel) handleReplayKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.replayNavigateForward()
 	case "[":
 		m.replayResizeSmaller()
+		rows := m.board.CellRows()
+		return m, func() tea.Msg { return BoardResizeMsg{Rows: rows} }
 	case "]":
 		m.replayResizeLarger()
+		rows := m.board.CellRows()
+		return m, func() tea.Msg { return BoardResizeMsg{Rows: rows} }
 	case "b":
 		if m.game != nil {
 			m.enterBranch()

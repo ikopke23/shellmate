@@ -36,6 +36,9 @@ type Model struct {
 	puzzle        *screens.PuzzleModel
 	createGame    *screens.CreateGameModel
 	width, height int
+	// boardRows is the user's persisted board zoom (cell height in rows), applied
+	// to each game/puzzle/replay screen as it is constructed.
+	boardRows int
 	// focused tracks terminal focus via DEC 1004 focus reporting. Defaults to
 	// true so that when focus reporting is unsupported we never spuriously alert.
 	focused bool
@@ -45,15 +48,20 @@ type Model struct {
 
 // NewModel creates the root model starting at the lobby screen.
 func NewModel(hub *server.Hub, client *server.Client, user *server.User, w, h int) Model {
+	rows := user.BoardRows
+	if rows < 2 || rows > 8 {
+		rows = 3
+	}
 	return Model{
-		screen:  screens.ScreenLobby,
-		hub:     hub,
-		client:  client,
-		user:    user,
-		lobby:   screens.NewLobbyModel(user.Username),
-		width:   w,
-		height:  h,
-		focused: true,
+		screen:    screens.ScreenLobby,
+		hub:       hub,
+		client:    client,
+		user:      user,
+		lobby:     screens.NewLobbyModel(user.Username),
+		width:     w,
+		height:    h,
+		boardRows: rows,
+		focused:   true,
 	}
 }
 
@@ -94,6 +102,7 @@ func (m Model) handleGameLifecycleMsg(msg tea.Msg) (Model, tea.Cmd, bool) {
 			myColor = chess.NoColor
 		}
 		m.game = screens.NewGameModel(msg.GameID, msg.White, msg.Black, myColor, m.user.Username, msg.TimeControl)
+		m.game.SetBoardCellSize(m.boardRows)
 		m.screen = screens.ScreenGame
 		return m, tea.Batch(m.game.Init(), m.client.Recv()), true
 	case shared.MoveMsg:
@@ -269,6 +278,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleServerError(msg)
 	case screens.ScreenChangeMsg:
 		return m.handleScreenChange(msg)
+	case screens.BoardResizeMsg:
+		m.boardRows = msg.Rows
+		return m, m.saveBoardRows(msg.Rows)
 	}
 	if m2, cmd, ok := m.handleGameLifecycleMsg(msg); ok {
 		return m2, cmd
@@ -375,6 +387,7 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 		return m, m.fetchImportedGames()
 	case screens.ScreenReplay:
 		m.replay = screens.NewReplayModel()
+		m.replay.SetBoardCellSize(m.boardRows)
 		switch d := msg.Data.(type) {
 		case shared.HistoryRecord:
 			if d.PGN != "" {
@@ -401,6 +414,7 @@ func (m Model) handleScreenChange(msg screens.ScreenChangeMsg) (tea.Model, tea.C
 		return m, m.fetchLeaderboard()
 	case screens.ScreenPuzzle:
 		m.puzzle = screens.NewPuzzleModel(m.user.Username)
+		m.puzzle.SetBoardCellSize(m.boardRows)
 		m.screen = screens.ScreenPuzzle
 		return m, m.fetchPuzzle()
 	case screens.ScreenGame:
@@ -491,6 +505,17 @@ func (m Model) fetchLeaderboard() tea.Cmd {
 			return screens.ErrMsg{Err: err}
 		}
 		return leaderboardLoadedMsg{players: toSharedPlayers(users)}
+	}
+}
+
+func (m Model) saveBoardRows(rows int) tea.Cmd {
+	hub := m.hub
+	username := m.user.Username
+	return func() tea.Msg {
+		if err := hub.SetBoardRows(context.Background(), username, rows); err != nil {
+			return screens.ErrMsg{Err: err}
+		}
+		return nil
 	}
 }
 

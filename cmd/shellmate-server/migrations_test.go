@@ -41,7 +41,7 @@ func TestReadMigrationFile_NonExistent_ReturnsError(t *testing.T) {
 
 func TestReadMigrations_ConcatenatesAllFiles(t *testing.T) {
 	dir := t.TempDir()
-	files := []string{"001_init.sql", "002_imported.sql", "003_puzzles.sql", "004_puzzle_skipped.sql", "005_context_moves.sql", "006_puzzle_rating_index.sql", "007_ssh_auth.sql"}
+	files := []string{"001_init.sql", "002_imported.sql", "003_puzzles.sql", "004_puzzle_skipped.sql", "005_context_moves.sql", "006_puzzle_rating_index.sql", "007_ssh_auth.sql", "008_board_rows.sql"}
 	for _, f := range files {
 		writeMigration(t, dir, f, "-- "+f+"\n")
 	}

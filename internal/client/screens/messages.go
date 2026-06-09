@@ -30,6 +30,10 @@ type ErrMsg struct {
 	Err error
 }
 
+// BoardResizeMsg reports a new board zoom level (cell height in rows) set by the
+// user in a resizable screen, so the root model can persist it.
+type BoardResizeMsg struct{ Rows int }
+
 // JoinGameMsg is sent by the lobby screen to join a game.
 type JoinGameMsg struct{ GameID string }
 
