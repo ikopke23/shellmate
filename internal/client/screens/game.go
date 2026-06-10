@@ -243,6 +243,18 @@ func (m *GameModel) handleResignKey() tea.Cmd {
 	return m.sendResign()
 }
 
+// SetBoardCellSize sets the board zoom (cell height in rows); no-op below the
+// minimum. Columns are always twice the rows.
+func (m *GameModel) SetBoardCellSize(rows int) {
+	if rows < 2 {
+		return
+	}
+	m.board.SetCellSize(rows*2, rows)
+}
+
+// BoardCellRows returns the current board zoom (cell height in rows).
+func (m *GameModel) BoardCellRows() int { return m.board.CellRows() }
+
 func (m *GameModel) handleResizeSmaller() {
 	rows := m.board.CellRows()
 	if rows > 2 {
@@ -288,10 +300,6 @@ func (m *GameModel) handleGameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clipboardSeq = osc
 		m.statusMsg = fmt.Sprintf("copied to clipboard: %s", filename)
 		return m, func() tea.Msg { return clearClipboardMsg{} }
-	case "[":
-		m.handleResizeSmaller()
-	case "]":
-		m.handleResizeLarger()
 	case "left":
 		m.handleNavigateBack()
 	case "right":
@@ -301,6 +309,18 @@ func (m *GameModel) handleGameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *GameModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Board resize keys are consumed here before the move input sees them, so the
+	// bracket characters never land in the move text box.
+	switch msg.String() {
+	case "[":
+		m.handleResizeSmaller()
+		rows := m.board.CellRows()
+		return m, func() tea.Msg { return BoardResizeMsg{Rows: rows} }
+	case "]":
+		m.handleResizeLarger()
+		rows := m.board.CellRows()
+		return m, func() tea.Msg { return BoardResizeMsg{Rows: rows} }
+	}
 	// Always delegate to LocalMoveInput first — it handles enter, q/r/b/n promo keys, esc-promo.
 	san, handled, inputCmd := m.input.HandleMsg(msg, m.board, m.chess)
 	if san != "" {

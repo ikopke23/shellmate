@@ -94,6 +94,11 @@ func (h *Hub) GetHistory(ctx context.Context, username string) ([]HistoryRecord,
 	return h.db.GetGameHistory(ctx, username)
 }
 
+// SetBoardRows persists the user's board zoom level.
+func (h *Hub) SetBoardRows(ctx context.Context, username string, rows int) error {
+	return h.db.SetBoardRows(ctx, username, rows)
+}
+
 // GetPuzzle returns the next puzzle for the given user as a shared.PuzzleRecord.
 func (h *Hub) GetPuzzle(ctx context.Context, username string) (*shared.PuzzleRecord, error) {
 	row, userRating, err := h.GetPuzzleForUser(ctx, username)

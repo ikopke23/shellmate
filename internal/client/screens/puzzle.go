@@ -362,6 +362,18 @@ func (m *PuzzleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// SetBoardCellSize sets the board zoom (cell height in rows); no-op below the
+// minimum. Columns are always twice the rows.
+func (m *PuzzleModel) SetBoardCellSize(rows int) {
+	if rows < 2 {
+		return
+	}
+	m.board.SetCellSize(rows*2, rows)
+}
+
+// BoardCellRows returns the current board zoom (cell height in rows).
+func (m *PuzzleModel) BoardCellRows() int { return m.board.CellRows() }
+
 func (m *PuzzleModel) resizeBoardSmaller() {
 	rows := m.board.CellRows()
 	if rows > 2 {
@@ -439,10 +451,12 @@ func (m *PuzzleModel) handlePuzzleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleNKey()
 	case "[":
 		m.resizeBoardSmaller()
-		return m, nil
+		rows := m.board.CellRows()
+		return m, func() tea.Msg { return BoardResizeMsg{Rows: rows} }
 	case "]":
 		m.resizeBoardLarger()
-		return m, nil
+		rows := m.board.CellRows()
+		return m, func() tea.Msg { return BoardResizeMsg{Rows: rows} }
 	case "left":
 		m.navigateBack()
 		return m, nil

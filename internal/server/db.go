@@ -21,6 +21,7 @@ type User struct {
 	Username    string `json:"username"`
 	Elo         int    `json:"elo"`
 	GamesPlayed int    `json:"games_played"`
+	BoardRows   int    `json:"board_rows"`
 }
 
 // GameRecord holds everything needed to write a completed game.
@@ -100,9 +101,9 @@ func (d *DB) GetUser(ctx context.Context, username string) (*User, error) {
 	u := &User{}
 	err := d.pool.QueryRow(
 		ctx,
-		`SELECT id, username, elo, games_played FROM users WHERE username = $1`,
+		`SELECT id, username, elo, games_played, board_rows FROM users WHERE username = $1`,
 		username,
-	).Scan(&u.ID, &u.Username, &u.Elo, &u.GamesPlayed)
+	).Scan(&u.ID, &u.Username, &u.Elo, &u.GamesPlayed, &u.BoardRows)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -118,12 +119,12 @@ func (d *DB) GetUserByKeyFingerprint(ctx context.Context, fingerprint string) (*
 	u := &User{}
 	err := d.pool.QueryRow(
 		ctx,
-		`SELECT u.id, u.username, u.elo, u.games_played
+		`SELECT u.id, u.username, u.elo, u.games_played, u.board_rows
 		 FROM user_ssh_keys k
 		 JOIN users u ON u.username = k.username
 		 WHERE k.fingerprint = $1`,
 		fingerprint,
-	).Scan(&u.ID, &u.Username, &u.Elo, &u.GamesPlayed)
+	).Scan(&u.ID, &u.Username, &u.Elo, &u.GamesPlayed, &u.BoardRows)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -131,6 +132,14 @@ func (d *DB) GetUserByKeyFingerprint(ctx context.Context, fingerprint string) (*
 		return nil, err
 	}
 	return u, nil
+}
+
+// SetBoardRows persists the user's board zoom level (cell height in rows).
+func (d *DB) SetBoardRows(ctx context.Context, username string, rows int) error {
+	_, err := d.pool.Exec(ctx,
+		`UPDATE users SET board_rows = $1 WHERE username = $2`,
+		rows, username)
+	return err
 }
 
 // CreateUserWithKey inserts a new user and links the SSH key fingerprint atomically.
