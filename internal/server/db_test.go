@@ -406,6 +406,91 @@ func TestDB_RecordAttemptAndUpdateRating(t *testing.T) {
 	}
 }
 
+func TestDB_HasAttempted(t *testing.T) {
+	db := testDB(t)
+	truncateAll(t, db)
+	ctx := context.Background()
+	if err := db.CreateUser(ctx, "ha"); err != nil {
+		t.Fatal(err)
+	}
+	base := PuzzleRow{
+		ID: "ha1", Rating: 1500,
+		FEN:   "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+		Moves: "d7d5", PuzzleDate: time.Now().UTC().Truncate(24 * time.Hour),
+		Themes: []string{}, OpeningTags: []string{},
+	}
+	if err := db.SavePuzzle(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	attempted, err := db.HasAttempted(ctx, "ha", "ha1")
+	if err != nil {
+		t.Fatalf("HasAttempted: %v", err)
+	}
+	if attempted {
+		t.Fatal("expected HasAttempted=false before any attempt")
+	}
+	if err := db.RecordAttemptAndUpdateRating(ctx, "ha", "ha1", true, false, 1516); err != nil {
+		t.Fatalf("RecordAttemptAndUpdateRating: %v", err)
+	}
+	attempted, err = db.HasAttempted(ctx, "ha", "ha1")
+	if err != nil {
+		t.Fatalf("HasAttempted: %v", err)
+	}
+	if !attempted {
+		t.Fatal("expected HasAttempted=true after recording an attempt")
+	}
+}
+
+func TestRecordPuzzleAttempt_Idempotent(t *testing.T) {
+	db := testDB(t)
+	truncateAll(t, db)
+	ctx := context.Background()
+	if err := db.CreateUser(ctx, "idem"); err != nil {
+		t.Fatal(err)
+	}
+	base := PuzzleRow{
+		ID: "idem1", Rating: 1500,
+		FEN:   "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+		Moves: "d7d5", PuzzleDate: time.Now().UTC().Truncate(24 * time.Hour),
+		Themes: []string{}, OpeningTags: []string{},
+	}
+	if err := db.SavePuzzle(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	h := &Hub{db: db, clients: make(map[string]*Client), games: make(map[string]*Game)}
+	r1, err := h.RecordPuzzleAttempt(ctx, "idem", "idem1", false, false) // first try: failed
+	if err != nil {
+		t.Fatalf("first RecordPuzzleAttempt: %v", err)
+	}
+	if r1 >= 1500 {
+		t.Fatalf("expected rating to drop after a failed attempt, got %d", r1)
+	}
+	r2, err := h.RecordPuzzleAttempt(ctx, "idem", "idem1", true, false) // retry: must be a no-op
+	if err != nil {
+		t.Fatalf("second RecordPuzzleAttempt: %v", err)
+	}
+	if r2 != r1 {
+		t.Errorf("second attempt changed rating: r1=%d r2=%d, want unchanged", r1, r2)
+	}
+	stored, err := db.GetPuzzleRating(ctx, "idem")
+	if err != nil {
+		t.Fatalf("GetPuzzleRating: %v", err)
+	}
+	if stored != r1 {
+		t.Errorf("stored rating = %d, want %d (no second mutation)", stored, r1)
+	}
+	var count int
+	row := db.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM user_puzzle_attempts WHERE username = $1 AND puzzle_id = $2`,
+		"idem", "idem1")
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("count attempts: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("attempt rows = %d, want 1 (no duplicate)", count)
+	}
+}
+
 func TestDB_GetPuzzleRating_DefaultWhenNotFound(t *testing.T) {
 	db := testDB(t)
 	truncateAll(t, db)
