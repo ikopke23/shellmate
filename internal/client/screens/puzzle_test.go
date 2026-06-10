@@ -84,17 +84,122 @@ func TestPuzzleValidateInvalidSAN(t *testing.T) {
 	}
 }
 
-func TestPuzzleRetryResetsToPlaying(t *testing.T) {
+func TestRetryAfterFailureResumesPlaying(t *testing.T) {
 	m := setupPuzzleModel(t)
 	m.validateAndApply("e5") // wrong move → failure
-	m.retry()
+	m.handleRetryKey()
 	if m.state != puzzleStatePlaying {
 		t.Errorf("after retry state = %v, want puzzleStatePlaying", m.state)
 	}
-	// FEN position should be restored — e4 should still have a pawn
+	// Wrong move was never applied — e4 should still have a pawn.
 	pos := m.game.Position()
 	if pos.Board().Piece(chess.E4) == chess.NoPiece {
-		t.Error("after retry, e4 should still have a pawn (restored from FEN)")
+		t.Error("after retry, e4 should still have a pawn")
+	}
+}
+
+func TestRetryAfterFailureKeepsProgress(t *testing.T) {
+	m := setupMultiMovePuzzle(t)
+	ok, engineUCI := m.validateAndApply("d5") // correct first move
+	if !ok {
+		t.Fatal("correct first move d5 was rejected")
+	}
+	m.applyEngineResponse(engineUCI) // engine plays exd5 → solutionIdx 2, playing
+	if m.solutionIdx != 2 {
+		t.Fatalf("solutionIdx = %d before failure, want 2", m.solutionIdx)
+	}
+	ok, _ = m.validateAndApply("Nf6") // legal but wrong (solution is Qxd5)
+	if ok {
+		t.Fatal("wrong move Nf6 was accepted")
+	}
+	if m.state != puzzleStateFailure {
+		t.Fatalf("state = %v after wrong move, want puzzleStateFailure", m.state)
+	}
+	m.handleRetryKey()
+	if m.state != puzzleStatePlaying {
+		t.Errorf("state = %v after retry, want puzzleStatePlaying", m.state)
+	}
+	if m.solutionIdx != 2 {
+		t.Errorf("solutionIdx = %d after retry, want 2 (progress preserved)", m.solutionIdx)
+	}
+	if len(m.game.Moves()) != 2 {
+		t.Errorf("game has %d moves after retry, want 2 (not reset)", len(m.game.Moves()))
+	}
+}
+
+func TestRetryAfterSuccessResetsToStart(t *testing.T) {
+	m := setupPuzzleModel(t)
+	m.validateAndApply("d5") // correct single-move solution → success
+	if m.state != puzzleStateSuccess {
+		t.Fatalf("state = %v, want puzzleStateSuccess", m.state)
+	}
+	m.handleRetryKey()
+	if m.state != puzzleStatePlaying {
+		t.Errorf("state = %v after retry, want puzzleStatePlaying", m.state)
+	}
+	if m.solutionIdx != 0 {
+		t.Errorf("solutionIdx = %d after retry, want 0 (reset to start)", m.solutionIdx)
+	}
+	if len(m.game.Moves()) != 0 {
+		t.Errorf("game has %d moves after retry, want 0 (reset to start)", len(m.game.Moves()))
+	}
+}
+
+func TestSubmittedPersistsAcrossRetry(t *testing.T) {
+	// Failure path: submit fires once, guard survives the resume.
+	m := setupPuzzleModel(t)
+	m.validateAndApply("e5") // wrong → failure
+	if cmd := m.submitAttempt(false); cmd == nil {
+		t.Fatal("first submitAttempt returned nil, expected a command")
+	}
+	if !m.submitted {
+		t.Fatal("expected submitted=true after first submitAttempt")
+	}
+	m.handleRetryKey() // resume from failure
+	if !m.submitted {
+		t.Error("submitted should remain true after retry-from-failure")
+	}
+	if cmd := m.submitAttempt(true); cmd != nil {
+		t.Error("submitAttempt after retry should be a no-op (nil), guard not held")
+	}
+	// Success path: guard survives the reset-to-start replay.
+	m2 := setupPuzzleModel(t)
+	m2.validateAndApply("d5") // → success
+	m2.submitAttempt(true)
+	m2.handleRetryKey() // reset to start
+	if !m2.submitted {
+		t.Error("submitted should remain true after retry-from-success")
+	}
+	if cmd := m2.submitAttempt(true); cmd != nil {
+		t.Error("submitAttempt after success replay should be a no-op (nil)")
+	}
+}
+
+func TestNewPuzzleResetsSubmitted(t *testing.T) {
+	m := setupPuzzleModel(t)
+	m.submitAttempt(false)
+	if !m.submitted {
+		t.Fatal("expected submitted=true after submitAttempt")
+	}
+	m.SetPuzzle(shared.PuzzleRecord{
+		ID: "next1", FEN: openingFEN, Moves: "d7d5", Rating: 1500, UserPuzzleRating: 1500,
+	})
+	if m.submitted {
+		t.Error("submitted should reset to false for a new puzzle")
+	}
+}
+
+func TestDeltaPersistsAcrossRetry(t *testing.T) {
+	m := setupPuzzleModel(t)
+	m.validateAndApply("e5") // wrong → failure
+	m.submitAttempt(false)
+	m.Update(PuzzleAttemptMsg{NewRating: 1484}) // initial rating 1500 → delta -16
+	if !m.hasDelta || m.lastDelta != -16 {
+		t.Fatalf("hasDelta=%v lastDelta=%d, want true/-16", m.hasDelta, m.lastDelta)
+	}
+	m.handleRetryKey() // resume from failure
+	if !m.hasDelta || m.lastDelta != -16 {
+		t.Errorf("after retry hasDelta=%v lastDelta=%d, want true/-16 (delta persists)", m.hasDelta, m.lastDelta)
 	}
 }
 
@@ -221,9 +326,12 @@ func TestRetryFromSolutionState(t *testing.T) {
 	m := setupPuzzleModel(t)
 	m.validateAndApply("e5")
 	m.showSolution()
-	m.retry()
+	m.handleRetryKey()
 	if m.state != puzzleStatePlaying {
 		t.Errorf("state = %v after retry from solution, want puzzleStatePlaying", m.state)
+	}
+	if m.solutionIdx != 0 {
+		t.Errorf("solutionIdx = %d after retry from solution, want 0 (reset to start)", m.solutionIdx)
 	}
 }
 

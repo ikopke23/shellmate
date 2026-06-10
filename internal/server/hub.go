@@ -223,6 +223,14 @@ func (h *Hub) RecordPuzzleAttempt(ctx context.Context, username, puzzleID string
 	if err != nil {
 		return 0, err
 	}
+	attempted, err := h.db.HasAttempted(ctx, username, puzzleID)
+	if err != nil {
+		return 0, err
+	}
+	if attempted {
+		slog.Info("Puzzle already attempted; rating unchanged", "username", username, "puzzle_id", puzzleID)
+		return currentRating, nil
+	}
 	newRating := currentRating
 	if !skipped {
 		newRating = PuzzleEloOutcome(currentRating, puzzle.Rating, solved)

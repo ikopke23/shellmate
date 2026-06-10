@@ -108,7 +108,6 @@ func (m *PuzzleModel) initGame() {
 	m.solutionIdx = 0
 	m.enginePending = false
 	m.input = NewLocalMoveInput(flipped)
-	m.submitted = false
 	m.state = puzzleStatePlaying
 	m.buildContextHistory()
 	m.viewIdx = m.totalViewPositions()
@@ -118,6 +117,15 @@ func (m *PuzzleModel) initGame() {
 // retry resets the puzzle to its initial playing state without recording an attempt.
 func (m *PuzzleModel) retry() {
 	m.initGame()
+}
+
+// resumeAfterFailure returns to the playing state at the current position without
+// resetting the puzzle. The wrong move was never applied, so game/solutionIdx are
+// already where the player needs to continue. ELO is unaffected (already recorded).
+func (m *PuzzleModel) resumeAfterFailure() {
+	m.state = puzzleStatePlaying
+	m.viewIdx = m.totalViewPositions()
+	m.syncBoardToView()
 }
 
 // showSolution resets the game to the puzzle FEN, applies all solution moves, and sets
@@ -405,8 +413,12 @@ func (m *PuzzleModel) navigateForward() {
 }
 
 func (m *PuzzleModel) handleRetryKey() tea.Cmd {
-	if m.state == puzzleStateFailure || m.state == puzzleStateSuccess || m.state == puzzleStateSolution {
+	switch m.state {
+	case puzzleStateFailure:
+		m.resumeAfterFailure()
+	case puzzleStateSuccess, puzzleStateSolution:
 		m.retry()
+	case puzzleStateLoading, puzzleStatePlaying:
 	}
 	return m.initCmd()
 }

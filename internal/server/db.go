@@ -416,6 +416,17 @@ func (d *DB) RecordAttemptAndUpdateRating(ctx context.Context, username, puzzleI
 	return tx.Commit(ctx)
 }
 
+// HasAttempted reports whether the user already has any recorded attempt for the puzzle.
+func (d *DB) HasAttempted(ctx context.Context, username, puzzleID string) (bool, error) {
+	var exists bool
+	err := d.pool.QueryRow(
+		ctx,
+		`SELECT EXISTS(SELECT 1 FROM user_puzzle_attempts WHERE username = $1 AND puzzle_id = $2)`,
+		username, puzzleID,
+	).Scan(&exists)
+	return exists, err
+}
+
 // GetPuzzleRating returns the user's current puzzle rating. Returns 1500 if user not found.
 func (d *DB) GetPuzzleRating(ctx context.Context, username string) (int, error) {
 	var rating int
