@@ -407,6 +407,8 @@ func (m *ReplayModel) View() string {
 	var sb strings.Builder
 	sb.WriteString(replayTitleStyle.Render("Replay"))
 	sb.WriteString("\n\n")
+	// Title on line 0, blank on line 1, so the board's top cell is on line 2.
+	m.input.SetBoardOriginY(2)
 	boardView := m.board.View()
 	moveView := m.moveList.View()
 	left := boardView
