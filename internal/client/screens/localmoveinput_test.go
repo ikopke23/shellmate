@@ -123,6 +123,30 @@ func TestLocalMoveInput_HandleMsg_MouseClickSelectsPiece(t *testing.T) {
 	}
 }
 
+func TestLocalMoveInput_HandleMsg_BoardOriginY_OffsetsClick(t *testing.T) {
+	// Screens like puzzle/replay draw a title before the board, so the board's
+	// top cell is at terminal row 2. With cellRows=3, e2 (cellRow 6) is drawn at
+	// rows 18,19,20 in board-local space, i.e. terminal rows 20,21,22. Clicking
+	// the bottom of that cell (row 22) must still resolve to E2, not the square
+	// below it. This is the off-by-one regression.
+	game := chess.NewGame()
+	board := render.NewBoard(game.Position(), false)
+	li := NewLocalMoveInput(false)
+	li.SetBoardOriginY(2)
+	// Bottom row of the e2 cell: x=26, board-local y=20 → terminal y=22.
+	msg := tea.MouseMsg{X: 26, Y: 22, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	san, handled, _ := li.HandleMsg(msg, board, game)
+	if !handled {
+		t.Fatalf("expected handled=true for click on board")
+	}
+	if san != "" {
+		t.Fatalf("expected empty san on first click, got %q", san)
+	}
+	if !li.hasSelected || li.selectedSq != chess.E2 {
+		t.Fatalf("expected selectedSq=E2 after clicking bottom of e2 cell, got selected=%v sq=%v", li.hasSelected, li.selectedSq)
+	}
+}
+
 func TestLocalMoveInput_HandleMsg_MouseClick_ConvertsToSAN(t *testing.T) {
 	game := chess.NewGame()
 	board := render.NewBoard(game.Position(), false)
@@ -198,6 +222,55 @@ func TestLocalMoveInput_HandleMsg_PromoMode_QSelectsQueen(t *testing.T) {
 	}
 	if li.pendingPromo {
 		t.Fatalf("expected pendingPromo cleared after selection")
+	}
+}
+
+func TestLocalMoveInput_HandlePromoClick_TopPieceRowSelectsQueen(t *testing.T) {
+	// The popup is laid out as: row promoPopupY = "Promote pawn:", then the
+	// piece cells on rows promoPopupY+1 .. promoPopupY+cellRows. Clicking the
+	// FIRST piece row (promoPopupY+1) on the queen (leftmost, x=2) must select
+	// the queen. This is the vertical off-by-one regression.
+	fen, _ := chess.FEN("3k4/4P3/8/8/8/8/8/4K3 w - - 0 1")
+	game := chess.NewGame(fen)
+	board := render.NewBoard(game.Position(), false)
+	li := NewLocalMoveInput(false)
+	li.pendingPromo = true
+	li.pendingPromoFrom = chess.E7
+	li.pendingPromoTo = chess.E8
+	li.SetPromoPopupY(26)
+	// Top piece row, queen column: x=2, y=27.
+	click := tea.MouseMsg{X: 2, Y: 27, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	san, handled, _ := li.HandleMsg(click, board, game)
+	if !handled {
+		t.Fatalf("expected handled=true for click on promo popup")
+	}
+	if san != "e8=Q+" && san != "e8=Q" {
+		t.Fatalf("expected queen promo SAN from top piece row, got %q", san)
+	}
+	if li.pendingPromo {
+		t.Fatalf("expected pendingPromo cleared after selection")
+	}
+}
+
+func TestLocalMoveInput_HandlePromoClick_LabelRowIsNotAPiece(t *testing.T) {
+	// The key-label row below the pieces (promoPopupY+cellRows+1) must NOT
+	// register as a piece selection.
+	fen, _ := chess.FEN("3k4/4P3/8/8/8/8/8/4K3 w - - 0 1")
+	game := chess.NewGame(fen)
+	board := render.NewBoard(game.Position(), false)
+	li := NewLocalMoveInput(false)
+	li.pendingPromo = true
+	li.pendingPromoFrom = chess.E7
+	li.pendingPromoTo = chess.E8
+	li.SetPromoPopupY(26)
+	// cellRows defaults to 3, so the label row is at 26+3+1 = 30.
+	click := tea.MouseMsg{X: 2, Y: 30, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	san, _, _ := li.HandleMsg(click, board, game)
+	if san != "" {
+		t.Fatalf("expected no promo selection on label row, got %q", san)
+	}
+	if !li.pendingPromo {
+		t.Fatalf("expected pendingPromo to remain set after clicking label row")
 	}
 }
 

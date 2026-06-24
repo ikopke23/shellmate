@@ -19,6 +19,7 @@ type LocalMoveInput struct {
 	pendingPromoFrom chess.Square
 	pendingPromoTo   chess.Square
 	promoPopupY      int
+	boardOriginY     int
 	flipped          bool
 }
 
@@ -41,6 +42,13 @@ func (li *LocalMoveInput) Init() tea.Cmd {
 // SetPromoPopupY positions the promotion popup relative to the board bottom.
 func (li *LocalMoveInput) SetPromoPopupY(y int) {
 	li.promoPopupY = y
+}
+
+// SetBoardOriginY records the terminal row at which the board's top cell is
+// drawn, so mouse clicks can be translated into board coordinates. Screens that
+// render content (e.g. a title) above the board must set this to that offset.
+func (li *LocalMoveInput) SetBoardOriginY(y int) {
+	li.boardOriginY = y
 }
 
 // PendingPromo reports whether a promotion selection is awaiting user input.
@@ -153,6 +161,7 @@ func (li *LocalMoveInput) handleSquareClick(sq chess.Square, board *render.Board
 func (li *LocalMoveInput) squareFromMouse(x, y int, board *render.Board) (chess.Square, bool) {
 	cellCols := board.CellCols()
 	cellRows := board.CellRows()
+	y -= li.boardOriginY
 	if x < 2 || x > 2+8*cellCols-1 || y < 0 || y > 8*cellRows-1 {
 		return 0, false
 	}
@@ -224,7 +233,9 @@ func (li *LocalMoveInput) promoSAN(key string, game *chess.Game) string {
 func (li *LocalMoveInput) handlePromoClick(x, y int, board *render.Board, game *chess.Game) string {
 	cols := board.CellCols()
 	rows := board.CellRows()
-	pieceY := li.promoPopupY + 2
+	// promoPopupY is the row of the "Promote pawn:" label; the piece cells are
+	// drawn on the rows immediately below it.
+	pieceY := li.promoPopupY + 1
 	if y < pieceY || y >= pieceY+rows {
 		return ""
 	}
