@@ -21,6 +21,7 @@ type LocalMoveInput struct {
 	promoPopupY      int
 	boardOriginY     int
 	flipped          bool
+	premoveMode      bool
 }
 
 // NewLocalMoveInput creates a new move-input helper. flipped indicates whether
@@ -54,6 +55,15 @@ func (li *LocalMoveInput) SetBoardOriginY(y int) {
 // PendingPromo reports whether a promotion selection is awaiting user input.
 func (li *LocalMoveInput) PendingPromo() bool {
 	return li.pendingPromo
+}
+
+// SetPremoveMode controls whether pawn promotions auto-queen (used during premove input).
+func (li *LocalMoveInput) SetPremoveMode(v bool) { li.premoveMode = v }
+
+// ClearSelection resets piece-selection and promotion state.
+func (li *LocalMoveInput) ClearSelection() {
+	li.hasSelected = false
+	li.pendingPromo = false
 }
 
 func (li *LocalMoveInput) handleMouseInput(msg tea.MouseMsg, board *render.Board, game *chess.Game) (san string, handled bool) {
@@ -149,7 +159,7 @@ func (li *LocalMoveInput) handleSquareClick(sq chess.Square, board *render.Board
 	from := li.selectedSq
 	li.hasSelected = false
 	board.ClearSelected()
-	if li.isPromotionMove(from, sq, game) {
+	if !li.premoveMode && li.isPromotionMove(from, sq, game) {
 		li.pendingPromo = true
 		li.pendingPromoFrom = from
 		li.pendingPromoTo = sq

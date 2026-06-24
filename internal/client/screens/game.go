@@ -64,6 +64,9 @@ type GameModel struct {
 	timed             bool
 	whiteMs           int
 	blackMs           int
+	premoves          []string
+	premovePairs      [][2]chess.Square
+	premoveList       *render.PremoveList
 }
 
 // NewGameModel creates a new game screen.
@@ -71,18 +74,19 @@ func NewGameModel(gameID, white, black string, myColor chess.Color, username str
 	g := chess.NewGame()
 	flipped := myColor == chess.Black
 	return &GameModel{
-		gameID:   gameID,
-		white:    white,
-		black:    black,
-		board:    render.NewBoard(g.Position(), flipped),
-		moveList: render.NewMoveList(20),
-		chess:    g,
-		myColor:  myColor,
-		input:    NewLocalMoveInput(myColor == chess.Black),
-		username: username,
-		timed:    tc.InitialSeconds > 0,
-		whiteMs:  tc.InitialSeconds * 1000,
-		blackMs:  tc.InitialSeconds * 1000,
+		gameID:      gameID,
+		white:       white,
+		black:       black,
+		board:       render.NewBoard(g.Position(), flipped),
+		moveList:    render.NewMoveList(20),
+		chess:       g,
+		myColor:     myColor,
+		input:       NewLocalMoveInput(myColor == chess.Black),
+		username:    username,
+		timed:       tc.InitialSeconds > 0,
+		whiteMs:     tc.InitialSeconds * 1000,
+		blackMs:     tc.InitialSeconds * 1000,
+		premoveList: render.NewPremoveList(),
 	}
 }
 
@@ -107,6 +111,7 @@ func (m *GameModel) ApplyMove(san string) {
 
 // SetMoves replaces the full move list (used after undo).
 func (m *GameModel) SetMoves(moves []string) {
+	m.clearPremoves()
 	m.chess = chess.NewGame()
 	m.moves = nil
 	for _, san := range moves {
@@ -189,6 +194,7 @@ func updateCheckHighlight(g *chess.Game, b *render.Board) {
 
 // SetGameOver marks the game as over and shows the result.
 func (m *GameModel) SetGameOver(result string, whiteElo, blackElo int) {
+	m.clearPremoves()
 	m.gameOver = true
 	m.result = result
 	m.statusMsg = fmt.Sprintf("Game over: %s (White: %d, Black: %d)", result, whiteElo, blackElo)
@@ -214,16 +220,43 @@ func (m *GameModel) Init() tea.Cmd {
 }
 
 func (m *GameModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-		if m.myColor != chess.NoColor && !m.gameOver && m.chess.Position().Turn() == m.myColor {
-			san, handled, cmd := m.input.HandleMsg(msg, m.board, m.chess)
-			if san != "" {
-				return m, tea.Batch(cmd, m.sendMoveStr(san))
-			}
-			if handled {
-				return m, cmd
-			}
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	if msg.Button == tea.MouseButtonRight {
+		if m.myColor != chess.NoColor && !m.gameOver {
+			m.clearPremoves()
 		}
+		return m, nil
+	}
+	if msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	if m.myColor == chess.NoColor || m.gameOver {
+		return m, nil
+	}
+	if m.chess.Position().Turn() == m.myColor {
+		san, handled, cmd := m.input.HandleMsg(msg, m.board, m.chess)
+		if san != "" {
+			return m, tea.Batch(cmd, m.sendMoveStr(san))
+		}
+		if handled {
+			return m, cmd
+		}
+		return m, nil
+	}
+	// Opponent's turn: route to premove input.
+	sim := buildPremoveSimGame(m.chess, m.myColor, m.premoves)
+	if sim == nil {
+		return m, nil
+	}
+	m.input.SetPremoveMode(true)
+	san, handled, cmd := m.input.HandleMsg(msg, m.board, sim)
+	m.input.SetPremoveMode(false)
+	if san != "" {
+		m.tryAddPremove(san)
+	} else if handled {
+		return m, cmd
 	}
 	return m, nil
 }
@@ -321,9 +354,22 @@ func (m *GameModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		rows := m.board.CellRows()
 		return m, func() tea.Msg { return BoardResizeMsg{Rows: rows} }
 	}
-	// Always delegate to LocalMoveInput first — it handles enter, q/r/b/n promo keys, esc-promo.
-	san, handled, inputCmd := m.input.HandleMsg(msg, m.board, m.chess)
+	// Determine game state for input validation; on opponent's turn use simulated position.
+	isOpponentTurn := m.myColor != chess.NoColor && !m.gameOver && m.chess.Position().Turn() != m.myColor
+	gameForInput := m.chess
+	if isOpponentTurn {
+		if sim := buildPremoveSimGame(m.chess, m.myColor, m.premoves); sim != nil {
+			gameForInput = sim
+		}
+	}
+	san, handled, inputCmd := m.input.HandleMsg(msg, m.board, gameForInput)
 	if san != "" {
+		if isOpponentTurn {
+			if !m.tryAddPremove(san) {
+				m.statusMsg = "premove invalid"
+			}
+			return m, inputCmd
+		}
 		return m, tea.Batch(inputCmd, m.sendMoveStr(san))
 	}
 	if handled {
@@ -428,7 +474,13 @@ func (m *GameModel) View() string {
 	boardView := m.board.View()
 	moveView := m.moveList.View()
 	left := boardView
-	right := lipgloss.NewStyle().Bold(true).Render("Moves") + "\n" + moveView
+	movesSection := lipgloss.NewStyle().Bold(true).Render("Moves") + "\n" + moveView
+	var right string
+	if len(m.premoves) > 0 {
+		right = lipgloss.JoinVertical(lipgloss.Left, m.premoveList.View(), movesSection)
+	} else {
+		right = movesSection
+	}
 	var columns []string
 	columns = append(columns, left, "  ", right)
 	if col := m.clockColumn(); col != "" {
@@ -477,6 +529,9 @@ func (m *GameModel) View() string {
 		help = "\u2190\u2192:navigate history  ctrl+e:export  esc:lobby"
 	default:
 		help = "enter/click:move  u:undo  ctrl+r:resign  ctrl+e:export  [/]:resize  \u2190\u2192:history  esc:lobby"
+		if len(m.premoves) > 0 {
+			help += "  right-click:cancel premoves"
+		}
 	}
 	sb.WriteString(gameHelpStyle.Render(help))
 	sb.WriteString("\n")

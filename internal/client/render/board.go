@@ -19,6 +19,8 @@ var (
 	selectedDarkBg   = lipgloss.Color("#DAD414")
 	checkLightBg     = lipgloss.Color("#FF6060")
 	checkDarkBg      = lipgloss.Color("#CC2020")
+	premoveLightBg   = lipgloss.Color("#FF9999")
+	premoveDarkBg    = lipgloss.Color("#CC4444")
 )
 
 // Board renders a chess board using lipgloss.
@@ -34,6 +36,7 @@ type Board struct {
 	hasSelected    bool
 	checkSquare    chess.Square
 	hasCheck       bool
+	premovePairs   [][2]chess.Square
 	cellCols       int
 	cellRows       int
 }
@@ -97,6 +100,16 @@ func (b *Board) ClearCheck() {
 	b.hasCheck = false
 }
 
+// SetPremoves updates the board's premove-highlight pairs.
+func (b *Board) SetPremoves(pairs [][2]chess.Square) {
+	b.premovePairs = pairs
+}
+
+// ClearPremoves removes all premove highlights.
+func (b *Board) ClearPremoves() {
+	b.premovePairs = nil
+}
+
 // SetFlipped sets whether the board is shown from black's perspective.
 func (b *Board) SetFlipped(flipped bool) {
 	b.flipped = flipped
@@ -112,6 +125,13 @@ func (b *Board) squareBgHex(sq chess.Square, fileIdx, rankIdx int) string {
 	isSelected := b.hasSelected && sq == b.selectedSquare
 	isHighlighted := b.hasLastMove && (sq == b.lastMoveFrom || sq == b.lastMoveTo)
 	isCheck := b.hasCheck && sq == b.checkSquare
+	isPremove := false
+	for _, pair := range b.premovePairs {
+		if sq == pair[0] || sq == pair[1] {
+			isPremove = true
+			break
+		}
+	}
 	switch {
 	case isSelected && isLight:
 		return string(selectedLightBg)
@@ -121,6 +141,10 @@ func (b *Board) squareBgHex(sq chess.Square, fileIdx, rankIdx int) string {
 		return string(checkLightBg)
 	case isCheck && !isLight:
 		return string(checkDarkBg)
+	case isPremove && isLight:
+		return string(premoveLightBg)
+	case isPremove && !isLight:
+		return string(premoveDarkBg)
 	case isHighlighted && isLight:
 		return string(highlightLightBg)
 	case isHighlighted && !isLight:

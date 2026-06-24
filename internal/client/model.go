@@ -111,6 +111,7 @@ func (m Model) handleGameLifecycleMsg(msg tea.Msg) (Model, tea.Cmd, bool) {
 			if m.screen != screens.ScreenGame {
 				m.screen = screens.ScreenGame
 			}
+			return m, tea.Batch(m.client.Recv(), m.game.TryExecutePremove()), true
 		}
 		return m, m.client.Recv(), true
 	case shared.GameOver:
