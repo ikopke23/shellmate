@@ -2,6 +2,10 @@
 /shellmate
 .worktrees/
 
+# IDE / build output
+.idea/
+bin/
+
 # claude Superpowers
 docs/superpowers/
 
