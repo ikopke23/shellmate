@@ -426,6 +426,8 @@ func (m *ReplayModel) View() string {
 		if m.atBranchTip() {
 			inputY := 2 + m.board.CellRows()*8 + 2
 			m.input.SetPromoPopupY(inputY)
+			// Title on line 0, blank on line 1, board starts at line 2.
+			m.input.SetBoardOriginY(2)
 			sb.WriteString(m.input.View(m.board, m.branchGame))
 		} else {
 			sb.WriteString(replayStepStyle.Render("   (navigate to tip to play)"))

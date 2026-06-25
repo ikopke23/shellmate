@@ -167,6 +167,38 @@ func TestLocalMoveInput_HandleMsg_MouseClick_ConvertsToSAN(t *testing.T) {
 	}
 }
 
+func TestLocalMoveInput_HandleMsg_MouseClick_AccountsForBoardTopY(t *testing.T) {
+	// Screens that draw a title above the board (puzzle, replay-branch) render
+	// the board starting at screen row 2. The click mapping must subtract that
+	// offset, otherwise every click lands one or more ranks too high.
+	game := chess.NewGame()
+	board := render.NewBoard(game.Position(), false)
+	li := NewLocalMoveInput(false)
+	li.SetBoardOriginY(2)
+
+	// e2 is at y=18 when the board top is row 0; with a top offset of 2 the same
+	// square is drawn at y=20.
+	msg := tea.MouseMsg{X: 26, Y: 20, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	if _, handled, _ := li.HandleMsg(msg, board, game); !handled {
+		t.Fatalf("expected handled=true for click on piece")
+	}
+	if !li.hasSelected {
+		t.Fatalf("expected hasSelected=true after clicking own piece at the offset board")
+	}
+	if li.selectedSq != chess.E2 {
+		t.Fatalf("expected selectedSq=E2, got %v", li.selectedSq)
+	}
+
+	// Regression guard: the un-offset coordinate (y=18) must no longer resolve to
+	// E2 when the board is shifted down — it maps two screen rows higher.
+	li2 := NewLocalMoveInput(false)
+	li2.SetBoardOriginY(2)
+	stale := tea.MouseMsg{X: 26, Y: 18, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	if _, _, _ = li2.HandleMsg(stale, board, game); li2.hasSelected && li2.selectedSq == chess.E2 {
+		t.Fatalf("y=18 should not select E2 when board top is offset by 2")
+	}
+}
+
 func TestLocalMoveInput_HandleMsg_FlippedBoard_MapsSquaresCorrectly(t *testing.T) {
 	game := chess.NewGame()
 	board := render.NewBoard(game.Position(), true)

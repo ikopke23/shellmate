@@ -516,8 +516,10 @@ func (m *PuzzleModel) View() string {
 	var sb strings.Builder
 	sb.WriteString(puzzleTitleStyle.Render("Puzzle Mode"))
 	sb.WriteString("\n\n")
-	// Title on line 0, blank on line 1, so the board's top cell is on line 2.
-	m.input.SetBoardOriginY(2)
+	// Title on line 0, blank on line 1, board starts at line 2.
+	if m.input != nil {
+		m.input.SetBoardOriginY(2)
+	}
 	boardView := m.board.View()
 	right := m.rightPanel()
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, boardView, "  ", right))
