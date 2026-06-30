@@ -261,7 +261,9 @@ func (m *PuzzleModel) validateAndApply(userSAN string) (bool, string) {
 		if algN.Encode(pos, mv) != userSAN {
 			continue
 		}
-		if uciN.Encode(pos, mv) != expectedUCI {
+		// Accept the scripted move, or any alternative that delivers checkmate:
+		// if the player finds a different mate, the puzzle is solved all the same.
+		if uciN.Encode(pos, mv) != expectedUCI && pos.Update(mv).Status() != chess.Checkmate {
 			m.state = puzzleStateFailure
 			return false, ""
 		}
@@ -280,6 +282,12 @@ func (m *PuzzleModel) validateAndApply(userSAN string) (bool, string) {
 	m.solutionIdx++
 	m.viewIdx = m.totalViewPositions()
 	m.updateMoveList()
+	// A checkmating move ends the game immediately — the puzzle is solved even if
+	// the scripted line had more moves (e.g. an alternative, shorter mate).
+	if m.game.Method() == chess.Checkmate {
+		m.state = puzzleStateSuccess
+		return true, ""
+	}
 	if m.solutionIdx < len(m.solution) {
 		return true, m.solution[m.solutionIdx]
 	}
