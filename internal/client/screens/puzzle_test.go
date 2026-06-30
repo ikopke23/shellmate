@@ -212,6 +212,53 @@ func TestPuzzleSkipMarksAsUnsolved(t *testing.T) {
 	}
 }
 
+// TestPuzzleAcceptsAlternativeMate verifies that a move differing from the scripted
+// solution is accepted when it delivers checkmate. The position (white to move) has
+// several queen mates on the h-file/g7; the puzzle scripts Qh1# ("g2h1") but Qh2# is
+// an equally valid mate and must be accepted as solved.
+func TestPuzzleAcceptsAlternativeMate(t *testing.T) {
+	record := shared.PuzzleRecord{
+		ID:               "altmate1",
+		FEN:              "7k/5K2/8/8/8/8/6Q1/8 w - - 0 1",
+		Moves:            "g2h1", // scripted: Qh1#
+		Rating:           1500,
+		UserPuzzleRating: 1500,
+	}
+	m := NewPuzzleModel("testuser")
+	m.SetPuzzle(record)
+	ok, engineUCI := m.validateAndApply("Qh2#") // different mate than scripted Qh1#
+	if !ok {
+		t.Fatal("alternative mating move Qh2# was rejected")
+	}
+	if engineUCI != "" {
+		t.Errorf("expected no engine response after mate, got %q", engineUCI)
+	}
+	if m.state != puzzleStateSuccess {
+		t.Errorf("state = %v after alternative mate, want puzzleStateSuccess", m.state)
+	}
+}
+
+// TestPuzzleRejectsNonMateAlternative verifies the alternative acceptance is narrow:
+// a legal-but-wrong move that does NOT deliver mate is still a failure.
+func TestPuzzleRejectsNonMateAlternative(t *testing.T) {
+	record := shared.PuzzleRecord{
+		ID:               "altmate2",
+		FEN:              "7k/5K2/8/8/8/8/6Q1/8 w - - 0 1",
+		Moves:            "g2h1", // scripted: Qh1#
+		Rating:           1500,
+		UserPuzzleRating: 1500,
+	}
+	m := NewPuzzleModel("testuser")
+	m.SetPuzzle(record)
+	ok, _ := m.validateAndApply("Qa2") // legal, not the solution, not mate
+	if ok {
+		t.Error("non-mating off-solution move Qa2 was accepted")
+	}
+	if m.state != puzzleStateFailure {
+		t.Errorf("state = %v, want puzzleStateFailure", m.state)
+	}
+}
+
 func setupMultiMovePuzzle(t *testing.T) *PuzzleModel {
 	t.Helper()
 	record := shared.PuzzleRecord{
